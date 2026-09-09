@@ -277,12 +277,15 @@
     return Number(product.processingCost) || 0;
   }
 
-  // Same idea as the processing-cost override above, but for labour cost
-  // (a flat ₹/batch figure, replacing the operator/loadman-count-based
-  // calculation outright): a product can have its own value, and a
-  // job-work company can too. When a batch matches both — a product with
-  // its own labour cost AND is tagged to a company with its own — the
-  // company's figure wins, since that's usually the actual contract term.
+  // Same idea as the processing-cost override above, but for labour cost,
+  // replacing the operator/loadman-count-based calculation outright: a
+  // product can have its own flat ₹/batch value, and a job-work company
+  // can have its own rate too — but the company's rate is ₹ per metric
+  // tonne of output (scaled by the batch's output), not a flat figure,
+  // since job-work labour contracts are usually quoted per MT. When a
+  // batch matches both — a product with its own labour cost AND is
+  // tagged to a company with its own — the company's rate wins, since
+  // that's usually the actual contract term.
   function productLabourCostOverride(productId) {
     if (!productId) return null;
     const product = state.products.find((p) => p.id === productId);
@@ -316,7 +319,9 @@
     const productLabour = productLabourCostOverride(productId);
     let labourCost;
     if (companyLabour != null) {
-      labourCost = companyLabour;
+      // Company labour rate is ₹ per metric tonne of output, not a flat
+      // per-batch figure — scale it by this batch's output.
+      labourCost = companyLabour * (outputQty / KG_PER_MT);
     } else if (productLabour != null) {
       labourCost = productLabour;
     } else {
@@ -966,6 +971,10 @@
   // Settings > "Labour cost by company" — same pattern again, but the
   // picker lists job-work companies and the override lives on the
   // company record in settings/jobwork instead of settings/products.
+  // Unlike the product-level override, this one is a ₹-per-metric-tonne
+  // rate (job-work labour contracts are usually quoted per MT), so it's
+  // multiplied by the batch's output MT in computeCosts() rather than
+  // applied flat.
   function populateLabourCompanySelect() {
     const sel = $("#s-labour-company");
     if (!sel) return;
@@ -1001,7 +1010,7 @@
     toast(
       clear
         ? "Cleared the labour cost override for \"" + company.name + "\" — back to using the product/default."
-        : "Labour cost for \"" + company.name + "\" set to " + fmtINR(parseFloat(inp.value) || 0) + ".",
+        : "Labour cost for \"" + company.name + "\" set to " + fmtINR(parseFloat(inp.value) || 0) + " per MT.",
       "success"
     );
     loadLabourCompanyCost();

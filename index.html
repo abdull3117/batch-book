@@ -533,15 +533,15 @@
         </div>
 
         <div class="card" style="margin-top:16px;">
-          <div class="card-title">Labour cost by company (&#8377;/batch)</div>
-          <p class="hint">A job work client&rsquo;s contract can mean different labour handling too. Pick a company to set its own flat labour cost &mdash; it overrides both the daily-wage calculation and any product override above for batches tagged to that company. Leave a company without one and it keeps using whichever of those applies.</p>
+          <div class="card-title">Labour cost by company (&#8377;/MT)</div>
+          <p class="hint">A job work client&rsquo;s contract can mean different labour handling too. Pick a company to set its own labour rate per metric tonne of output &mdash; it&rsquo;s multiplied by each batch&rsquo;s output and overrides both the daily-wage calculation and any product override above for batches tagged to that company. Leave a company without one and it keeps using whichever of those applies.</p>
           <div class="field-row" style="grid-template-columns:1fr 1fr;">
             <div class="field">
               <label for="s-labour-company">Company</label>
               <select id="s-labour-company"></select>
             </div>
             <div class="field">
-              <label for="s-labour-company-cost">Labour cost for this company (&#8377;)</label>
+              <label for="s-labour-company-cost">Labour cost for this company (&#8377;/MT)</label>
               <input type="number" min="0" step="any" id="s-labour-company-cost" placeholder="Using product/default" />
             </div>
           </div>
@@ -665,6 +665,6 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
-<script src="app.js?v=19"></script>
+<script src="app.js?v=20"></script>
 </body>
 </html>
