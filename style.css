@@ -317,4 +317,36 @@ td.strong { font-weight: 700; }
 
 ::-webkit-scrollbar { width: 9px; height: 9px; }
 ::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 6px; }
+
+/* ---------- Access gate ---------- */
+.lock-screen {
+  position: fixed; inset: 0; z-index: 200;
+  background: var(--bg);
+  display: flex; align-items: center; justify-content: center;
+  padding: 20px;
+}
+.lock-screen[hidden] { display: none; }
+.lock-card {
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md); padding: 32px 28px; width: 100%; max-width: 340px; text-align: center;
+}
+.lock-card h2 { font-family: var(--font-display); font-size: 1.15rem; font-weight: 800; margin: 0 0 4px; }
+.lock-card .sub { color: var(--text-muted); font-size: .82rem; margin: 0 0 18px; }
+.lock-card input[type="password"] {
+  background: var(--bg); border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
+  padding: 10px 12px; color: var(--text); width: 100%; font-size: .95rem; text-align: center;
+}
+.lock-card input[type="password"]:focus { outline: none; border-color: var(--accent); }
+.lock-error {
+  color: var(--critical); font-size: .78rem; margin: 10px 0 0; font-weight: 600;
+}
+.lock-card .hint { font-size: .72rem; color: var(--text-faint); }
+
+.role-badge {
+  font-family: var(--font-display); font-weight: 700; font-size: .68rem;
+  text-transform: uppercase; letter-spacing: .04em;
+  background: var(--surface-2); color: var(--text-muted);
+  border-radius: 999px; padding: 4px 10px;
+}
+.role-badge.admin { background: var(--accent-soft); color: var(--accent-ink); }
 ::-webkit-scrollbar-track { background: transparent; }

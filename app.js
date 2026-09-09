@@ -99,6 +99,31 @@
   const SHEETS_SYNC_URL = "https://script.google.com/macros/s/AKfycbx8FyHZmfEBSD9-j6WqMTuwXx6K2v3e_VgiWuqtShvYsbWLef2dGcFYOb67bbpXyGV3/exec";
 
   // ---------------------------------------------------------------
+  // Access control — simple shared-password gate with two roles.
+  // Password hashes (SHA-256 hex, never the plaintext) live in Firestore
+  // at settings/access so an admin can change them anytime from Settings
+  // without a redeploy. Defaults below seed that doc the first time the
+  // app ever runs; change them from Settings right away.
+  //   Default admin password: emr@admin2026
+  //   Default team password:  emr@team2026
+  // This is a UI-level gate for everyday privacy between roles (team
+  // members shouldn't see costs/rates), not a hardened security boundary
+  // — the app has no server-side auth, so anyone with the raw Firebase
+  // config could still reach the database directly.
+  const DEFAULT_ACCESS = {
+    adminHash: "b97c6bd1d212e55a03b591b68470794bb96fdf7700b01ce7ce95d59a5390b22d",
+    teamHash: "e672b7f6c2f08d00452e72d9cff3fd5ef19130c7270ec854f10c8d6a3b96b45d",
+  };
+  const ROLE_STORAGE_KEY = "bb_role";
+  // Tabs a "team" role cannot see — they show costs, rates and wages.
+  const ADMIN_ONLY_TABS = ["reports", "settings"];
+
+  async function sha256Hex(str) {
+    const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(str));
+    return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, "0")).join("");
+  }
+
+  // ---------------------------------------------------------------
   // State
   // ---------------------------------------------------------------
   const state = {
@@ -107,6 +132,8 @@
     materials: DEFAULT_MATERIALS.slice(),
     products: DEFAULT_PRODUCTS.slice(),
     labour: Object.assign({}, DEFAULT_LABOUR),
+    access: Object.assign({}, DEFAULT_ACCESS),
+    role: null, // "admin" | "team" | null (locked)
     entries: [],
     stock: [],
     activeTab: "entry",
@@ -362,6 +389,22 @@
       },
       () => {}
     );
+    db.doc("settings/access").onSnapshot(
+      (snap) => {
+        if (snap.exists) {
+          const data = snap.data();
+          state.access = {
+            adminHash: data.adminHash || DEFAULT_ACCESS.adminHash,
+            teamHash: data.teamHash || DEFAULT_ACCESS.teamHash,
+          };
+        } else {
+          // First time the app has ever run — seed the doc with the
+          // default passwords so they can be changed from Settings.
+          db.doc("settings/access").set(DEFAULT_ACCESS).catch(() => {});
+        }
+      },
+      () => {}
+    );
     db.collection("entries").orderBy("createdAt", "desc").limit(500).onSnapshot(
       (snap) => {
         state.entries = snap.docs.map((d) => Object.assign({ id: d.id }, d.data()));
@@ -383,9 +426,88 @@
   }
 
   // ---------------------------------------------------------------
+  // Access gate
+  // ---------------------------------------------------------------
+  function lockScreenError(msg) {
+    const errEl = $("#lock-error");
+    if (!errEl) return;
+    if (!msg) { errEl.hidden = true; errEl.textContent = ""; return; }
+    errEl.textContent = msg;
+    errEl.hidden = false;
+  }
+
+  async function attemptUnlock() {
+    const input = $("#lock-password");
+    const pw = (input.value || "").trim();
+    if (!pw) return lockScreenError("Enter a password.");
+    const btn = $("#btn-unlock");
+    btn.disabled = true;
+    btn.textContent = "Checking…";
+    try {
+      const hash = await sha256Hex(pw);
+      let role = null;
+      if (hash === state.access.adminHash) role = "admin";
+      else if (hash === state.access.teamHash) role = "team";
+      if (!role) {
+        lockScreenError("Incorrect password. Try again.");
+        input.value = "";
+        input.focus();
+        return;
+      }
+      lockScreenError(null);
+      input.value = "";
+      try { sessionStorage.setItem(ROLE_STORAGE_KEY, role); } catch (e) { /* ignore */ }
+      applyRole(role);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Unlock";
+    }
+  }
+
+  function lockApp() {
+    try { sessionStorage.removeItem(ROLE_STORAGE_KEY); } catch (e) { /* ignore */ }
+    state.role = null;
+    $("#app").hidden = true;
+    $("#lock-screen").hidden = false;
+    $("#lock-password").value = "";
+    $("#lock-password").focus();
+  }
+
+  // Applies role-based visibility: team members can log batches and see
+  // stock quantities, but not costs, rates, wages or Reports.
+  function applyRole(role) {
+    state.role = role;
+    $("#lock-screen").hidden = true;
+    $("#app").hidden = false;
+
+    const badge = $("#role-badge");
+    const logoutBtn = $("#btn-logout");
+    if (badge) {
+      badge.hidden = false;
+      badge.textContent = role === "admin" ? "Admin view" : "Team view";
+      badge.className = "role-badge" + (role === "admin" ? " admin" : "");
+    }
+    if (logoutBtn) logoutBtn.hidden = false;
+
+    const isTeam = role === "team";
+    const reportsTab = $("#tab-btn-reports");
+    const settingsTab = $("#tab-btn-settings");
+    if (reportsTab) reportsTab.hidden = isTeam;
+    if (settingsTab) settingsTab.hidden = isTeam;
+    const costBlock = $("#cost-details-block");
+    if (costBlock) costBlock.hidden = isTeam;
+
+    // If a team member was mid-way on an admin-only tab (or is being
+    // switched down from admin), bounce them back to Log Batch.
+    if (isTeam && ADMIN_ONLY_TABS.indexOf(state.activeTab) !== -1) switchTab("entry");
+    renderTodayList();
+  }
+
+  // ---------------------------------------------------------------
   // Tabs
   // ---------------------------------------------------------------
   function switchTab(tab) {
+    if (state.role === "team" && ADMIN_ONLY_TABS.indexOf(tab) !== -1) return;
     state.activeTab = tab;
     $all(".tab-btn").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
     $all(".view").forEach((v) => v.classList.toggle("active", v.id === "view-" + tab));
@@ -543,10 +665,13 @@
       return;
     }
     rows.forEach((r) => {
+      const metaText = state.role === "team"
+        ? fmtNum(r.outputQty, 0) + " Kg"
+        : fmtNum(r.outputQty, 0) + " Kg · " + fmtINR(r.totalCost) + " · " + fmtINR(r.costPerKg) + "/Kg";
       const row = el("div", { class: "today-row" }, [
         el("div", { class: "today-main" }, [
           el("span", { class: "today-product" }, [productName(r.productId)]),
-          el("span", { class: "today-meta" }, [fmtNum(r.outputQty, 0) + " Kg · " + fmtINR(r.totalCost) + " · " + fmtINR(r.costPerKg) + "/Kg"]),
+          el("span", { class: "today-meta" }, [metaText]),
         ]),
         el("div", { class: "today-actions" }, [
           el("button", {
@@ -1028,10 +1153,33 @@
     }
   }
 
+  async function saveAccessPasswords() {
+    const newAdmin = ($("#s-admin-password").value || "").trim();
+    const newTeam = ($("#s-team-password").value || "").trim();
+    if (!newAdmin && !newTeam) return toast("Enter a new password in at least one field.", "warn");
+    const payload = Object.assign({}, state.access);
+    if (newAdmin) payload.adminHash = await sha256Hex(newAdmin);
+    if (newTeam) payload.teamHash = await sha256Hex(newTeam);
+    state.access = payload;
+    try {
+      if (state.db) await state.db.doc("settings/access").set(payload);
+      $("#s-admin-password").value = "";
+      $("#s-team-password").value = "";
+      toast("Password(s) updated. Share the new one(s) with whoever needs them.", "success");
+    } catch (e) {
+      toast("Could not update passwords: " + e.message, "error");
+    }
+  }
+
   // ---------------------------------------------------------------
   // Wire up static DOM events (once)
   // ---------------------------------------------------------------
   function wireEvents() {
+    $("#btn-unlock").addEventListener("click", attemptUnlock);
+    $("#lock-password").addEventListener("keydown", (e) => { if (e.key === "Enter") attemptUnlock(); });
+    $("#btn-logout").addEventListener("click", lockApp);
+    $("#btn-save-access").addEventListener("click", saveAccessPasswords);
+
     $all(".tab-btn").forEach((b) => b.addEventListener("click", () => switchTab(b.dataset.tab)));
 
     $("#f-date").value = todayStr();
@@ -1180,5 +1328,14 @@
     wireEvents();
     renderAll();
     initDb();
+
+    // Already unlocked earlier this browser tab session? Skip the gate.
+    let savedRole = null;
+    try { savedRole = sessionStorage.getItem(ROLE_STORAGE_KEY); } catch (e) { /* ignore */ }
+    if (savedRole === "admin" || savedRole === "team") {
+      applyRole(savedRole);
+    } else {
+      $("#lock-password").focus();
+    }
   });
 })();

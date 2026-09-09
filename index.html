@@ -11,10 +11,28 @@
 <!-- Cache-busting: GitHub Pages caches these for 10 minutes (Cache-Control: max-age=600).
      Bump the ?v= number on app.js, style.css and firebase-config.js below every time
      any of those files are redeployed, so users don't keep running a stale cached copy. -->
-<link rel="stylesheet" href="style.css?v=1" />
+<link rel="stylesheet" href="style.css?v=2" />
 </head>
 <body>
-<div id="app">
+
+<!-- ============ ACCESS GATE ============
+     Simple shared-password gate: two roles (admin / team), password
+     hashes stored in Firestore (settings/access) so they can be changed
+     from Settings without a redeploy. This is a UI-level gate for
+     everyday privacy between roles, not a hardened security boundary. -->
+<div id="lock-screen" class="lock-screen">
+  <div class="lock-card">
+    <div class="brand-mark" style="margin:0 auto 14px;">BB</div>
+    <h2>Batch Book</h2>
+    <p class="sub">EMR Fertilizers &middot; enter your access password</p>
+    <input type="password" id="lock-password" placeholder="Password" autocomplete="current-password" />
+    <p class="lock-error" id="lock-error" hidden></p>
+    <button class="btn btn-primary" id="btn-unlock" style="width:100%; margin-top:12px;">Unlock</button>
+    <p class="hint" style="margin-top:14px;">Ask your admin for the team password if you don&rsquo;t have one.</p>
+  </div>
+</div>
+
+<div id="app" hidden>
 <div class="topbar">
   <div class="brand">
     <div class="brand-mark">BB</div>
@@ -25,13 +43,15 @@
   </div>
   <div class="tabs" role="tablist">
     <button class="tab-btn active" data-tab="entry">Log Batch</button>
-    <button class="tab-btn" data-tab="reports">Reports</button>
+    <button class="tab-btn" data-tab="reports" id="tab-btn-reports">Reports</button>
     <button class="tab-btn" data-tab="stock">Stock</button>
-    <button class="tab-btn" data-tab="settings">Settings</button>
+    <button class="tab-btn" data-tab="settings" id="tab-btn-settings">Settings</button>
   </div>
   <div class="sync">
     <span class="sync-dot connecting" id="sync-dot"></span>
     <span id="sync-label">Connecting&hellip;</span>
+    <span class="role-badge" id="role-badge" hidden></span>
+    <button class="btn btn-secondary btn-small" id="btn-logout" hidden>Log out</button>
   </div>
 </div>
 
@@ -112,14 +132,16 @@
 
       <div>
         <div class="card summary-card">
-          <div class="card-title">This batch&rsquo;s cost</div>
-          <div class="summary-row"><span class="k">Raw material cost</span><span class="v" id="sum-rm">&#8377;0.00</span></div>
-          <div class="summary-row"><span class="k">Processing cost</span><span class="v" id="sum-processing">&#8377;0.00</span></div>
-          <div class="summary-row"><span class="k">Labour cost</span><span class="v" id="sum-labour">&#8377;0.00</span></div>
-          <div class="summary-total"><span class="k">Total cost</span><span class="v" id="sum-total">&#8377;0.00</span></div>
-          <div class="summary-cpk">
-            <div class="v" id="sum-cpk">&mdash;</div>
-            <div class="k">Cost per Kg</div>
+          <div id="cost-details-block">
+            <div class="card-title">This batch&rsquo;s cost</div>
+            <div class="summary-row"><span class="k">Raw material cost</span><span class="v" id="sum-rm">&#8377;0.00</span></div>
+            <div class="summary-row"><span class="k">Processing cost</span><span class="v" id="sum-processing">&#8377;0.00</span></div>
+            <div class="summary-row"><span class="k">Labour cost</span><span class="v" id="sum-labour">&#8377;0.00</span></div>
+            <div class="summary-total"><span class="k">Total cost</span><span class="v" id="sum-total">&#8377;0.00</span></div>
+            <div class="summary-cpk">
+              <div class="v" id="sum-cpk">&mdash;</div>
+              <div class="k">Cost per Kg</div>
+            </div>
           </div>
           <div id="sum-mat-count">0 materials used</div>
           <button class="btn btn-primary" id="btn-submit">Save batch</button>
@@ -365,6 +387,22 @@
         </div>
 
         <div class="card" style="margin-top:16px;">
+          <div class="card-title">Access control</div>
+          <p class="hint">Set the shared passwords used to unlock the app. Team members only see Log Batch &amp; Stock &mdash; no costs, rates or Reports. Leave a field blank to keep that password unchanged.</p>
+          <div class="field-row" style="grid-template-columns:1fr 1fr;">
+            <div class="field">
+              <label for="s-admin-password">New admin password</label>
+              <input type="password" id="s-admin-password" autocomplete="new-password" placeholder="Leave blank to keep current" />
+            </div>
+            <div class="field">
+              <label for="s-team-password">New team password</label>
+              <input type="password" id="s-team-password" autocomplete="new-password" placeholder="Leave blank to keep current" />
+            </div>
+          </div>
+          <button class="btn btn-primary" id="btn-save-access">Update passwords</button>
+        </div>
+
+        <div class="card" style="margin-top:16px;">
           <div class="card-title">Products</div>
           <div class="table-wrap max-scroll">
             <table>
@@ -402,6 +440,6 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
-<script src="app.js?v=1"></script>
+<script src="app.js?v=2"></script>
 </body>
 </html>
