@@ -1015,7 +1015,7 @@
     const logBody = $("#batch-log-body");
     logBody.innerHTML = "";
     if (!rows.length) {
-      logBody.appendChild(el("tr", {}, [el("td", { colspan: "8", class: "empty-hint" }, ["No batches logged in this range."])]));
+      logBody.appendChild(el("tr", {}, [el("td", { colspan: "9", class: "empty-hint" }, ["No batches logged in this range."])]));
     } else {
       rows.slice().sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0)).forEach((r) => {
         logBody.appendChild(el("tr", {}, [
@@ -1027,9 +1027,29 @@
           el("td", { class: "num" }, [fmtINR(r.labourCost)]),
           el("td", { class: "num strong" }, [fmtINR(r.totalCost)]),
           el("td", { class: "num" }, [fmtINR(r.costPerKg)]),
+          el("td", { class: "num" }, [
+            el("div", { class: "today-actions", style: "justify-content:flex-end;" }, [
+              el("button", {
+                class: "icon-btn", title: "View this batch's full details",
+                onclick: () => viewEntry(r),
+              }, ["\u{1F441}"]),
+              el("button", {
+                class: "icon-btn", title: "Edit this batch",
+                onclick: () => editEntryFromReports(r),
+              }, ["✎"]),
+            ]),
+          ]),
         ]));
       });
     }
+  }
+
+  // Editing lives on the Log Batch form, so jumping into it from the
+  // Reports batch log switches tabs first, then loads the entry exactly
+  // like editing from Log Batch's own list would.
+  function editEntryFromReports(entry) {
+    switchTab("entry");
+    editEntry(entry);
   }
 
   function renderBarChart(container, data, opts) {
