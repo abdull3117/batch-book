@@ -1,0 +1,297 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Batch Book — EMR Fertilizers</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🏭</text></svg>" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;800&family=Public+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<div id="app">
+<div class="topbar">
+  <div class="brand">
+    <div class="brand-mark">BB</div>
+    <div class="brand-text">
+      <h1>Batch Book</h1>
+      <p class="sub">EMR Fertilizers &middot; daily production log</p>
+    </div>
+  </div>
+  <div class="tabs" role="tablist">
+    <button class="tab-btn active" data-tab="entry">Log Batch</button>
+    <button class="tab-btn" data-tab="reports">Reports</button>
+    <button class="tab-btn" data-tab="stock">Stock</button>
+    <button class="tab-btn" data-tab="settings">Settings</button>
+  </div>
+  <div class="sync">
+    <span class="sync-dot connecting" id="sync-dot"></span>
+    <span id="sync-label">Connecting&hellip;</span>
+  </div>
+</div>
+
+<div id="app-body">
+
+  <!-- ============ LOG BATCH ============ -->
+  <section class="view active" id="view-entry">
+    <div class="view-header">
+      <h2>Log today&rsquo;s batch</h2>
+      <p>One row per batch. Save this one, then log the next &mdash; add as many batches and different products as you need for the same day.</p>
+    </div>
+
+    <div class="entry-layout">
+      <div class="card" id="entry-form">
+        <div class="quickfill-row" id="quickfill-row">
+          <button type="button" class="btn btn-secondary btn-small" id="btn-repeat-last">&#8635; Repeat last batch</button>
+          <span class="hint">Fills product, materials &amp; labour from your last batch today &mdash; handy for back-to-back batches.</span>
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label for="f-date">Date</label>
+            <input type="date" id="f-date" />
+          </div>
+          <div class="field" style="grid-column: span 2;">
+            <label for="f-product">Product</label>
+            <select id="f-product" class="product-select"></select>
+          </div>
+          <div class="field">
+            <label for="f-output">Output produced (Kg)</label>
+            <input type="number" min="0" step="any" inputmode="decimal" id="f-output" placeholder="0" />
+          </div>
+        </div>
+
+        <div class="card-title" style="margin-top:6px;">Raw material used today</div>
+        <div class="mat-search-row">
+          <input type="text" id="mat-search" placeholder="Search a raw material&hellip;" />
+          <span class="hint">Leave unused materials blank</span>
+        </div>
+        <div id="material-grid"></div>
+
+        <div class="labour-row">
+          <div class="field">
+            <label for="f-operators">Operators (count)</label>
+            <input type="number" min="0" step="1" id="f-operators" placeholder="0" />
+          </div>
+          <div class="field">
+            <label for="f-loadmen">Loadmen (count)</label>
+            <input type="number" min="0" step="1" id="f-loadmen" placeholder="0" />
+          </div>
+        </div>
+        <div class="field wide" style="margin-top:12px;">
+          <label for="f-remarks">Remarks (optional)</label>
+          <textarea id="f-remarks" placeholder="Anything the office should know about this batch"></textarea>
+        </div>
+      </div>
+
+      <div>
+        <div class="card summary-card">
+          <div class="card-title">This batch&rsquo;s cost</div>
+          <div class="summary-row"><span class="k">Raw material cost</span><span class="v" id="sum-rm">&#8377;0.00</span></div>
+          <div class="summary-row"><span class="k">Processing cost</span><span class="v" id="sum-processing">&#8377;0.00</span></div>
+          <div class="summary-row"><span class="k">Labour cost</span><span class="v" id="sum-labour">&#8377;0.00</span></div>
+          <div class="summary-total"><span class="k">Total cost</span><span class="v" id="sum-total">&#8377;0.00</span></div>
+          <div class="summary-cpk">
+            <div class="v" id="sum-cpk">&mdash;</div>
+            <div class="k">Cost per Kg</div>
+          </div>
+          <div id="sum-mat-count">0 materials used</div>
+          <button class="btn btn-primary" id="btn-submit">Save batch</button>
+        </div>
+
+        <div class="card" style="margin-top:16px;">
+          <div class="card-title" id="today-list-label">Batches logged today</div>
+          <div id="today-list"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ REPORTS ============ -->
+  <section class="view" id="view-reports">
+    <div class="view-header">
+      <h2>Production reports</h2>
+      <p>Review batches, cost, and output across any date range or a single product.</p>
+    </div>
+
+    <div class="card">
+      <div class="filter-row">
+        <div class="field">
+          <label for="rep-start">From</label>
+          <input type="date" id="rep-start" />
+        </div>
+        <div class="field">
+          <label for="rep-end">To</label>
+          <input type="date" id="rep-end" />
+        </div>
+        <div class="field">
+          <label for="rep-product">Product</label>
+          <select id="rep-product"></select>
+        </div>
+        <button class="btn btn-secondary btn-small" id="rep-preset-month">This month</button>
+        <button class="btn btn-secondary btn-small" id="rep-preset-all">All time</button>
+      </div>
+
+      <div class="tiles">
+        <div class="tile"><div class="tk">Batches</div><div class="tv" id="tile-batches">0</div></div>
+        <div class="tile"><div class="tk">Total output</div><div class="tv" id="tile-output">0 Kg</div></div>
+        <div class="tile"><div class="tk">Total cost</div><div class="tv" id="tile-cost">&#8377;0</div></div>
+        <div class="tile"><div class="tk">Avg cost / Kg</div><div class="tv" id="tile-cpk">&mdash;</div></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="chart-row">
+        <div>
+          <div class="card-title">Output by product (Kg)</div>
+          <div id="chart-output"></div>
+        </div>
+        <div>
+          <div class="card-title">Total cost by product (&#8377;)</div>
+          <div id="chart-cost"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Individual production report &mdash; by product</div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Product</th><th class="num">Batches</th><th class="num">Output (Kg)</th>
+              <th class="num">Total cost</th><th class="num">Avg cost/Kg</th>
+            </tr>
+          </thead>
+          <tbody id="product-report-body"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Batch log</div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Date</th><th>Product</th><th class="num">Output (Kg)</th><th class="num">RM cost</th>
+              <th class="num">Processing</th><th class="num">Labour</th><th class="num">Total cost</th><th class="num">Cost/Kg</th>
+            </tr>
+          </thead>
+          <tbody id="batch-log-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ STOCK ============ -->
+  <section class="view" id="view-stock">
+    <div class="view-header">
+      <h2>Finished goods stock</h2>
+      <p>Opening stock plus what was produced, minus what was dispatched, gives the closing stock.</p>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Add / update a stock entry</div>
+      <div class="field-row">
+        <div class="field">
+          <label for="st-date">Date</label>
+          <input type="date" id="st-date" />
+        </div>
+        <div class="field">
+          <label for="st-product">Product</label>
+          <select id="st-product"></select>
+        </div>
+        <div class="field">
+          <label for="st-opening">Opening stock (Kg)</label>
+          <input type="number" min="0" step="any" id="st-opening" placeholder="0" />
+        </div>
+        <div class="field">
+          <label for="st-dispatched">Dispatched / sold (Kg)</label>
+          <input type="number" min="0" step="any" id="st-dispatched" placeholder="0" />
+        </div>
+      </div>
+      <button class="btn btn-primary" id="btn-stock-save" style="max-width:240px;">Save stock entry</button>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Stock ledger</div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Date</th><th>Product</th><th class="num">Opening</th><th class="num">Produced</th>
+              <th class="num">Dispatched</th><th class="num">Closing</th>
+            </tr>
+          </thead>
+          <tbody id="stock-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ SETTINGS ============ -->
+  <section class="view" id="view-settings">
+    <div class="view-header">
+      <h2>Settings</h2>
+      <p>Raw material rates, labour wages and the processing cost used to calculate every batch.</p>
+    </div>
+
+    <div class="settings-grid">
+      <div class="card">
+        <div class="card-title">Raw material rates (&#8377; per unit)</div>
+        <div class="table-wrap max-scroll">
+          <table>
+            <thead><tr><th>Material</th><th>Unit</th><th class="num">Rate</th></tr></thead>
+            <tbody id="settings-materials-body"></tbody>
+          </table>
+        </div>
+        <button class="btn btn-primary" id="btn-save-rates">Save rates</button>
+      </div>
+
+      <div>
+        <div class="card">
+          <div class="card-title">Labour &amp; processing cost</div>
+          <div class="field-row" style="grid-template-columns:1fr;">
+            <div class="field">
+              <label for="s-operator-rate">Operator daily wage (&#8377;)</label>
+              <input type="number" min="0" step="any" id="s-operator-rate" />
+            </div>
+            <div class="field">
+              <label for="s-loadman-rate">Loadman daily wage (&#8377;)</label>
+              <input type="number" min="0" step="any" id="s-loadman-rate" />
+            </div>
+            <div class="field">
+              <label for="s-processing-cost">Default processing cost per batch (&#8377;)</label>
+              <input type="number" min="0" step="any" id="s-processing-cost" />
+            </div>
+          </div>
+          <button class="btn btn-primary" id="btn-save-labour">Save settings</button>
+        </div>
+
+        <div class="card" style="margin-top:16px;">
+          <div class="card-title">Products</div>
+          <div class="table-wrap max-scroll">
+            <table>
+              <thead><tr><th>Product</th><th>Unit</th></tr></thead>
+              <tbody id="settings-products-body"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+</div>
+
+<div id="toast-host"></div>
+</div>
+
+<!-- Firebase (compat SDK) — shared live database, no Claude account needed -->
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore-compat.js"></script>
+<script src="firebase-config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
