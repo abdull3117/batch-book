@@ -514,6 +514,44 @@
         </div>
 
         <div class="card" style="margin-top:16px;">
+          <div class="card-title">Labour cost by product (&#8377;/batch)</div>
+          <p class="hint">Some products take more labour to handle than others. Pick a product to set its own flat labour cost &mdash; it replaces the operator/loadman-count calculation above for that product&rsquo;s batches. Leave a product without one and it keeps using the daily-wage calculation.</p>
+          <div class="field-row" style="grid-template-columns:1fr 1fr;">
+            <div class="field">
+              <label for="s-labour-product">Product</label>
+              <select id="s-labour-product"></select>
+            </div>
+            <div class="field">
+              <label for="s-labour-product-cost">Labour cost for this product (&#8377;)</label>
+              <input type="number" min="0" step="any" id="s-labour-product-cost" placeholder="Using operator/loadman wages" />
+            </div>
+          </div>
+          <div class="btn-row">
+            <button class="btn btn-primary btn-small" id="btn-save-labour-product">Save for this product</button>
+            <button class="btn btn-secondary btn-small" id="btn-clear-labour-product">Clear override</button>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top:16px;">
+          <div class="card-title">Labour cost by company (&#8377;/batch)</div>
+          <p class="hint">A job work client&rsquo;s contract can mean different labour handling too. Pick a company to set its own flat labour cost &mdash; it overrides both the daily-wage calculation and any product override above for batches tagged to that company. Leave a company without one and it keeps using whichever of those applies.</p>
+          <div class="field-row" style="grid-template-columns:1fr 1fr;">
+            <div class="field">
+              <label for="s-labour-company">Company</label>
+              <select id="s-labour-company"></select>
+            </div>
+            <div class="field">
+              <label for="s-labour-company-cost">Labour cost for this company (&#8377;)</label>
+              <input type="number" min="0" step="any" id="s-labour-company-cost" placeholder="Using product/default" />
+            </div>
+          </div>
+          <div class="btn-row">
+            <button class="btn btn-primary btn-small" id="btn-save-labour-company">Save for this company</button>
+            <button class="btn btn-secondary btn-small" id="btn-clear-labour-company">Clear override</button>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top:16px;">
           <div class="card-title">Processing cost breakdown (&#8377; per month)</div>
           <p class="hint">Enter each monthly expense once. Divided by your budgeted monthly output, this gives a &#8377;/MT processing-cost rate that&rsquo;s applied to every batch based on its own MT output. Saving here also copies this rate into the &ldquo;Fallback processing cost per batch&rdquo; field above, so the two always match.</p>
           <div class="field-row" style="grid-template-columns:1fr 1fr;">
@@ -579,7 +617,7 @@
           <div class="card-title">Products</div>
           <div class="table-wrap max-scroll">
             <table>
-              <thead><tr><th>Product</th><th>Unit</th><th>Fallback processing cost</th></tr></thead>
+              <thead><tr><th>Product</th><th>Unit</th><th>Fallback processing cost</th><th>Labour cost</th></tr></thead>
               <tbody id="settings-products-body"></tbody>
             </table>
           </div>
@@ -627,6 +665,6 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
-<script src="app.js?v=18"></script>
+<script src="app.js?v=19"></script>
 </body>
 </html>

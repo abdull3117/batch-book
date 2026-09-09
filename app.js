@@ -277,7 +277,26 @@
     return Number(product.processingCost) || 0;
   }
 
-  function computeCosts(materialsQty, outputQty, operators, loadmen, productId) {
+  // Same idea as the processing-cost override above, but for labour cost
+  // (a flat ₹/batch figure, replacing the operator/loadman-count-based
+  // calculation outright): a product can have its own value, and a
+  // job-work company can too. When a batch matches both — a product with
+  // its own labour cost AND is tagged to a company with its own — the
+  // company's figure wins, since that's usually the actual contract term.
+  function productLabourCostOverride(productId) {
+    if (!productId) return null;
+    const product = state.products.find((p) => p.id === productId);
+    if (!product || product.labourCost === undefined || product.labourCost === null || product.labourCost === "") return null;
+    return Number(product.labourCost) || 0;
+  }
+  function companyLabourCostOverride(companyId) {
+    if (!companyId) return null;
+    const company = jobCompanyById(companyId);
+    if (!company || company.labourCost === undefined || company.labourCost === null || company.labourCost === "") return null;
+    return Number(company.labourCost) || 0;
+  }
+
+  function computeCosts(materialsQty, outputQty, operators, loadmen, productId, companyId) {
     let rmCost = 0;
     state.materials.forEach((m) => {
       const q = Number(materialsQty[m.id]) || 0;
@@ -293,8 +312,17 @@
         ? perMT * (outputQty / KG_PER_MT)
         : (Number(state.labour.processingCost) || 0);
     }
-    const labourCost = (Number(operators) || 0) * (Number(state.labour.operatorRate) || 0) +
-      (Number(loadmen) || 0) * (Number(state.labour.loadmanRate) || 0);
+    const companyLabour = companyLabourCostOverride(companyId);
+    const productLabour = productLabourCostOverride(productId);
+    let labourCost;
+    if (companyLabour != null) {
+      labourCost = companyLabour;
+    } else if (productLabour != null) {
+      labourCost = productLabour;
+    } else {
+      labourCost = (Number(operators) || 0) * (Number(state.labour.operatorRate) || 0) +
+        (Number(loadmen) || 0) * (Number(state.labour.loadmanRate) || 0);
+    }
     const totalCost = rmCost + processingCost + labourCost;
     const costPerKg = outputQty > 0 ? totalCost / outputQty : 0;
     return { rmCost, processingCost, labourCost, totalCost, costPerKg };
@@ -833,6 +861,7 @@
     populateReportProductFilter();
     populateJobProductLinkSelect();
     populateFallbackProductSelect();
+    populateLabourProductSelect();
   }
 
   // Settings > "Fallback processing cost by product" — a plain product
@@ -885,6 +914,100 @@
     renderSettingsProducts();
   }
 
+  // Settings > "Labour cost by product" — same pattern as the processing-
+  // cost-by-product picker above, for productLabourCostOverride().
+  function populateLabourProductSelect() {
+    const sel = $("#s-labour-product");
+    if (!sel) return;
+    const current = sel.value;
+    sel.innerHTML = "";
+    state.products.forEach((p) => sel.appendChild(el("option", { value: p.id }, [p.name])));
+    if (current && state.products.some((p) => p.id === current)) sel.value = current;
+    loadLabourProductCost();
+  }
+
+  function loadLabourProductCost() {
+    const sel = $("#s-labour-product");
+    const inp = $("#s-labour-product-cost");
+    if (!sel || !inp) return;
+    const override = productLabourCostOverride(sel.value);
+    inp.value = override != null ? override : "";
+  }
+
+  async function saveLabourProductCost(clear) {
+    const sel = $("#s-labour-product");
+    const inp = $("#s-labour-product-cost");
+    if (!sel || !sel.value) return toast("Pick a product first.", "error");
+    const idx = state.products.findIndex((p) => p.id === sel.value);
+    if (idx === -1) return;
+    const product = state.products[idx];
+    const updated = Object.assign({}, product);
+    if (clear) {
+      delete updated.labourCost;
+    } else {
+      updated.labourCost = parseFloat(inp.value) || 0;
+    }
+    state.products = state.products.map((p, i) => (i === idx ? updated : p));
+    try {
+      if (state.db) await state.db.doc("settings/products").set({ items: state.products });
+      toast(
+        clear
+          ? "Cleared the labour cost override for \"" + product.name + "\" — back to using operator/loadman wages."
+          : "Labour cost for \"" + product.name + "\" set to " + fmtINR(updated.labourCost) + ".",
+        "success"
+      );
+    } catch (e) {
+      toast("Could not save: " + e.message, "error");
+    }
+    loadLabourProductCost();
+    renderSettingsProducts();
+  }
+
+  // Settings > "Labour cost by company" — same pattern again, but the
+  // picker lists job-work companies and the override lives on the
+  // company record in settings/jobwork instead of settings/products.
+  function populateLabourCompanySelect() {
+    const sel = $("#s-labour-company");
+    if (!sel) return;
+    const current = sel.value;
+    sel.innerHTML = "";
+    state.jobworkCompanies.forEach((c) => sel.appendChild(el("option", { value: c.id }, [c.name])));
+    if (current && state.jobworkCompanies.some((c) => c.id === current)) sel.value = current;
+    loadLabourCompanyCost();
+  }
+
+  function loadLabourCompanyCost() {
+    const sel = $("#s-labour-company");
+    const inp = $("#s-labour-company-cost");
+    if (!sel || !inp) return;
+    const override = companyLabourCostOverride(sel.value);
+    inp.value = override != null ? override : "";
+  }
+
+  async function saveLabourCompanyCost(clear) {
+    const sel = $("#s-labour-company");
+    const inp = $("#s-labour-company-cost");
+    if (!sel || !sel.value) return toast("Pick a company first.", "error");
+    const company = jobCompanyById(sel.value);
+    if (!company) return;
+    const updated = state.jobworkCompanies.map((c) => {
+      if (c.id !== sel.value) return c;
+      const next = Object.assign({}, c);
+      if (clear) delete next.labourCost;
+      else next.labourCost = parseFloat(inp.value) || 0;
+      return next;
+    });
+    await saveJobworkCompanies(updated);
+    toast(
+      clear
+        ? "Cleared the labour cost override for \"" + company.name + "\" — back to using the product/default."
+        : "Labour cost for \"" + company.name + "\" set to " + fmtINR(parseFloat(inp.value) || 0) + ".",
+      "success"
+    );
+    loadLabourCompanyCost();
+    updateLiveSummary();
+  }
+
   function getFormMaterialsQty() {
     const out = {};
     $all(".mat-input").forEach((inp) => {
@@ -904,7 +1027,8 @@
     const loadmen = parseFloat($("#f-loadmen").value) || 0;
     const mats = getFormMaterialsQty();
     const productId = $("#f-product") ? $("#f-product").value : "";
-    const c = computeCosts(mats, outputQty, operators, loadmen, productId);
+    const companyId = $("#f-jobwork-company") ? $("#f-jobwork-company").value : "";
+    const c = computeCosts(mats, outputQty, operators, loadmen, productId, companyId);
     $("#sum-rm").textContent = fmtINR(c.rmCost);
     $("#sum-processing").textContent = fmtINR(c.processingCost);
     $("#sum-labour").textContent = fmtINR(c.labourCost);
@@ -978,7 +1102,12 @@
     if (outputVal <= 0) return toast("Enter the output quantity produced.", "error");
     if (Object.keys(mats).length === 0) return toast("Enter at least one raw material quantity.", "error");
 
-    const c = computeCosts(mats, outputQty, operators, loadmen, productId);
+    // Job work tag — this batch IS the job-work record when a company is
+    // picked; revenue/profit are computed off this batch's own cost (c),
+    // and its labour/processing cost overrides (if any) are looked up by
+    // this same company id inside computeCosts().
+    const jobworkCompanyId = $("#f-jobwork-company") ? $("#f-jobwork-company").value : "";
+    const c = computeCosts(mats, outputQty, operators, loadmen, productId, jobworkCompanyId);
     const editingId = state.editingEntryId;
     const existing = editingId ? state.entries.find((e) => e.id === editingId) : null;
     const payload = {
@@ -992,10 +1121,6 @@
     };
     if (editingId) payload.updatedAt = new Date().toISOString();
 
-    // Job work tag — this batch IS the job-work record when a company is
-    // picked; revenue/profit are computed once, right here, off this
-    // batch's own cost (c), and saved alongside it.
-    const jobworkCompanyId = $("#f-jobwork-company") ? $("#f-jobwork-company").value : "";
     if (jobworkCompanyId) {
       const company = jobCompanyById(jobworkCompanyId);
       const jr = jobRateFor(jobworkCompanyId, productId);
@@ -1403,6 +1528,7 @@
       state.jobworkCompanies.forEach((c) => stFilterSel.appendChild(el("option", { value: c.id }, [c.name])));
       if (cur) stFilterSel.value = cur;
     }
+    populateLabourCompanySelect();
   }
 
   // Profit & loss — date range + company filter over regular entries
@@ -1988,10 +2114,12 @@
     body.innerHTML = "";
     state.products.forEach((p, idx) => {
       const hasOverride = p.processingCost !== undefined && p.processingCost !== null && p.processingCost !== "";
+      const hasLabourOverride = p.labourCost !== undefined && p.labourCost !== null && p.labourCost !== "";
       body.appendChild(el("tr", {}, [
         el("td", {}, [p.name]),
         el("td", {}, [buildUnitSelect(p.unit, "row-unit-select", (unit) => updateProductUnit(idx, unit))]),
         el("td", {}, [hasOverride ? fmtINR(Number(p.processingCost) || 0) : "Using default"]),
+        el("td", {}, [hasLabourOverride ? fmtINR(Number(p.labourCost) || 0) : "Using wages"]),
       ]));
     });
   }
@@ -2282,6 +2410,14 @@
     if ($("#s-fallback-product")) $("#s-fallback-product").addEventListener("change", loadFallbackProductCost);
     if ($("#btn-save-fallback-product")) $("#btn-save-fallback-product").addEventListener("click", () => saveFallbackProductCost(false));
     if ($("#btn-clear-fallback-product")) $("#btn-clear-fallback-product").addEventListener("click", () => saveFallbackProductCost(true));
+
+    // Labour cost by product / by company.
+    if ($("#s-labour-product")) $("#s-labour-product").addEventListener("change", loadLabourProductCost);
+    if ($("#btn-save-labour-product")) $("#btn-save-labour-product").addEventListener("click", () => saveLabourProductCost(false));
+    if ($("#btn-clear-labour-product")) $("#btn-clear-labour-product").addEventListener("click", () => saveLabourProductCost(true));
+    if ($("#s-labour-company")) $("#s-labour-company").addEventListener("change", loadLabourCompanyCost);
+    if ($("#btn-save-labour-company")) $("#btn-save-labour-company").addEventListener("click", () => saveLabourCompanyCost(false));
+    if ($("#btn-clear-labour-company")) $("#btn-clear-labour-company").addEventListener("click", () => saveLabourCompanyCost(true));
 
     // Processing cost breakdown — live readout as the user types, before saving.
     $("#btn-save-processing-breakdown").addEventListener("click", saveProcessingBreakdown);
