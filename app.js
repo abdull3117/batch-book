@@ -705,9 +705,30 @@
     updateLiveSummary();
   }
 
+  // Dropdown of every date that has batches logged, newest first, so you
+  // can jump straight to a day's production instead of hunting through the
+  // calendar picker one day at a time. Kept in sync with #f-date whenever
+  // renderTodayList() runs (new data, date changed some other way, etc).
+  function populateDateJump(dateVal) {
+    const sel = $("#date-jump");
+    if (!sel) return;
+    dateVal = dateVal || ($("#f-date") ? $("#f-date").value || todayStr() : todayStr());
+    const counts = {};
+    state.entries.forEach((e) => { if (e.date) counts[e.date] = (counts[e.date] || 0) + 1; });
+    if (!(dateVal in counts)) counts[dateVal] = 0; // list the currently selected date even with 0 batches
+    const dates = Object.keys(counts).sort().reverse();
+    sel.innerHTML = "";
+    dates.forEach((d) => {
+      const n = counts[d];
+      sel.appendChild(el("option", { value: d }, [d + " (" + n + (n === 1 ? " batch)" : " batches)")]));
+    });
+    sel.value = dateVal;
+  }
+
   function renderTodayList() {
     const host = $("#today-list");
     const dateVal = $("#f-date") ? $("#f-date").value || todayStr() : todayStr();
+    populateDateJump(dateVal);
     const rows = state.entries.filter((e) => e.date === dateVal);
     $("#today-list-label").textContent = "Batches logged for " + dateVal +
       (rows.length ? " (" + rows.length + (rows.length === 1 ? " batch" : " batches") + ")" : "");
@@ -1368,6 +1389,16 @@
 
     $("#f-date").value = todayStr();
     $("#f-date").addEventListener("change", renderTodayList);
+    if ($("#date-jump")) {
+      $("#date-jump").addEventListener("change", () => {
+        const v = $("#date-jump").value;
+        if (!v) return;
+        exitEditMode();
+        $("#f-date").value = v;
+        renderTodayList();
+        $("#today-list-label").scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+    }
     $("#entry-form").addEventListener("input", updateLiveSummary);
     $("#btn-submit").addEventListener("click", submitEntry);
     $("#btn-repeat-last").addEventListener("click", repeatLastBatch);

@@ -159,7 +159,10 @@
         </div>
 
         <div class="card" style="margin-top:16px;">
-          <div class="card-title" id="today-list-label">Batches logged today</div>
+          <div class="card-title-row">
+            <div class="card-title" id="today-list-label" style="margin:0;">Batches logged today</div>
+            <select id="date-jump" class="unit-select" style="max-width:220px;"></select>
+          </div>
           <div id="today-list"></div>
         </div>
       </div>
@@ -465,6 +468,6 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
-<script src="app.js?v=7"></script>
+<script src="app.js?v=8"></script>
 </body>
 </html>
