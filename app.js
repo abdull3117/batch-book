@@ -62,7 +62,7 @@
   // copy of all entries. Firestore (above) remains the source of truth
   // the app itself reads from; this push is fire-and-forget and never
   // blocks or fails a save if the sheet is unreachable.
-  const SHEETS_SYNC_URL = "";
+  const SHEETS_SYNC_URL = "https://script.google.com/macros/s/AKfycbx8FyHZmfEBSD9-j6WqMTuwXx6K2v3e_VgiWuqtShvYsbWLef2dGcFYOb67bbpXyGV3/exec";
 
   // ---------------------------------------------------------------
   // State
