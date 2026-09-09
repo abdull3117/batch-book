@@ -928,7 +928,7 @@
     const { jsPDF } = window.jspdf;
     const doc = new jsPDF({ orientation: "landscape" });
     doc.setFontSize(14);
-    doc.text("Batch Book — Production Report (EMR Fertilizers)", 14, 15);
+    doc.text("Batch Book — Production Report (EMR Groups)", 14, 15);
     doc.setFontSize(9);
     const range = (($("#rep-start") && $("#rep-start").value) || "All time") + "   to   " + (($("#rep-end") && $("#rep-end").value) || "present");
     doc.text(range, 14, 21);
