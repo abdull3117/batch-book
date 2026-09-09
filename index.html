@@ -300,16 +300,29 @@
           <input type="number" min="0" step="any" id="st-dispatched" placeholder="0" />
         </div>
       </div>
+      <div class="field-row" style="margin-top:-6px;">
+        <div class="field wide">
+          <label for="st-company">Dispatch to company (optional)</label>
+          <select id="st-company"></select>
+          <p class="hint" style="margin-top:6px;">Leave as &ldquo;Regular stock/dispatch&rdquo; for ordinary sales. Pick a job work company to record finished goods dispatched back to that client &mdash; no opening balance needed for those, just the quantity sent.</p>
+        </div>
+      </div>
       <button class="btn btn-primary" id="btn-stock-save" style="max-width:240px;">Save stock entry</button>
     </div>
 
     <div class="card">
-      <div class="card-title">Stock ledger</div>
+      <div class="card-title-row">
+        <div class="card-title" style="margin:0;">Stock ledger</div>
+        <div class="field" style="max-width:220px;">
+          <label for="st-filter-company">Company</label>
+          <select id="st-filter-company"></select>
+        </div>
+      </div>
       <div class="table-wrap">
         <table>
           <thead>
             <tr>
-              <th>Date</th><th>Product</th><th class="num">Opening (MT)</th><th class="num">Produced (MT)</th>
+              <th>Date</th><th>Product</th><th>Company</th><th class="num">Opening (MT)</th><th class="num">Produced (MT)</th>
               <th class="num">Dispatched (MT)</th><th class="num">Closing (MT)</th>
             </tr>
           </thead>
@@ -591,6 +604,6 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
-<script src="app.js?v=13"></script>
+<script src="app.js?v=14"></script>
 </body>
 </html>

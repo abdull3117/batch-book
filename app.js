@@ -1288,9 +1288,11 @@
     if (current) sel.value = current;
   }
 
-  // The "Job work for" picker on the Log Batch form, and the "Company"
-  // filter on the Reports tab — both list every job-work company so a
-  // batch can be tagged, or reports filtered, by company.
+  // The "Job work for" picker on the Log Batch form, the "Company" filter
+  // on the Reports tab, and the Stock tab's "Dispatch to company" picker
+  // + ledger filter — all list every job-work company so a batch can be
+  // tagged, a report or the stock ledger filtered, or a dispatch recorded
+  // against a company.
   function populateJobworkCompanyPickers() {
     const entrySel = $("#f-jobwork-company");
     if (entrySel) {
@@ -1307,6 +1309,23 @@
       repSel.appendChild(el("option", { value: "" }, ["All companies"]));
       state.jobworkCompanies.forEach((c) => repSel.appendChild(el("option", { value: c.id }, [c.name])));
       if (cur) repSel.value = cur;
+    }
+    const stSel = $("#st-company");
+    if (stSel) {
+      const cur = stSel.value;
+      stSel.innerHTML = "";
+      stSel.appendChild(el("option", { value: "" }, ["— Regular stock/dispatch —"]));
+      state.jobworkCompanies.forEach((c) => stSel.appendChild(el("option", { value: c.id }, [c.name])));
+      if (cur) stSel.value = cur;
+    }
+    const stFilterSel = $("#st-filter-company");
+    if (stFilterSel) {
+      const cur = stFilterSel.value;
+      stFilterSel.innerHTML = "";
+      stFilterSel.appendChild(el("option", { value: "" }, ["All companies"]));
+      stFilterSel.appendChild(el("option", { value: "__regular__" }, ["Regular (no company)"]));
+      state.jobworkCompanies.forEach((c) => stFilterSel.appendChild(el("option", { value: c.id }, [c.name])));
+      if (cur) stFilterSel.value = cur;
     }
   }
 
@@ -1674,13 +1693,34 @@
     if (current) sel.value = current;
   }
 
+  // A date+product's overall stock can now have several docs: one
+  // "regular" entry (no company — holds the opening balance) plus zero or
+  // more company-tagged dispatch entries (finished goods sent back to a
+  // job work client on that date). These helpers treat all of them as one
+  // ledger per date+product so the running balance stays correct however
+  // many companies were dispatched to on a given day.
+  function stockRowsFor(date, productId) {
+    return state.stock.filter((s) => s.date === date && s.productId === productId);
+  }
+  function regularStockRow(date, productId) {
+    return stockRowsFor(date, productId).find((s) => !s.companyId) || null;
+  }
+  function totalDispatchedFor(date, productId) {
+    return stockRowsFor(date, productId).reduce((sum, s) => sum + (Number(s.dispatched) || 0), 0);
+  }
+  function closingFor(date, productId) {
+    const reg = regularStockRow(date, productId);
+    const opening = reg ? Number(reg.opening) || 0 : 0;
+    const producedMT = producedFor(date, productId) / KG_PER_MT;
+    return opening + producedMT - totalDispatchedFor(date, productId);
+  }
+
   function suggestOpening(productId, date) {
-    const prior = state.stock
-      .filter((s) => s.productId === productId && s.date < date)
-      .sort((a, b) => (a.date < b.date ? 1 : -1))[0];
-    if (!prior) return 0;
-    const producedMT = producedFor(prior.date, productId) / KG_PER_MT;
-    return (Number(prior.opening) || 0) + producedMT - (Number(prior.dispatched) || 0);
+    const priorDate = Array.from(new Set(
+      state.stock.filter((s) => s.productId === productId && s.date < date).map((s) => s.date)
+    )).sort((a, b) => (a < b ? 1 : -1))[0];
+    if (!priorDate) return 0;
+    return closingFor(priorDate, productId);
   }
 
   // Returns Kg — the batch entries this is summed from are stored in Kg.
@@ -1694,20 +1734,48 @@
   function stockAutofillOpening() {
     const productId = $("#st-product").value;
     const date = $("#st-date").value;
+    const companyId = $("#st-company") ? $("#st-company").value : "";
     if (!productId || !date) return;
-    const existing = state.stock.find((s) => s.date === date && s.productId === productId);
-    $("#st-opening").value = existing ? existing.opening : suggestOpening(productId, date);
-    $("#st-dispatched").value = existing ? existing.dispatched : "";
+    const openingField = $("#st-opening");
+    if (companyId) {
+      // Dispatching to a company is a transaction against the day's
+      // overall stock, not its own opening balance — the regular row
+      // (if any) already carries that.
+      const existing = state.stock.find((s) => s.date === date && s.productId === productId && s.companyId === companyId);
+      $("#st-dispatched").value = existing ? existing.dispatched : "";
+      if (openingField) {
+        openingField.value = "";
+        openingField.disabled = true;
+        openingField.placeholder = "N/A for company dispatch";
+      }
+    } else {
+      const existing = regularStockRow(date, productId);
+      if (openingField) {
+        openingField.disabled = false;
+        openingField.placeholder = "0";
+        openingField.value = existing ? existing.opening : suggestOpening(productId, date);
+      }
+      $("#st-dispatched").value = existing ? existing.dispatched : "";
+    }
   }
 
   async function submitStock() {
     const productId = $("#st-product").value;
     const date = $("#st-date").value;
-    const opening = parseFloat($("#st-opening").value) || 0;
+    const companyId = $("#st-company") ? $("#st-company").value : "";
     const dispatched = parseFloat($("#st-dispatched").value) || 0;
     if (!productId || !date) return toast("Pick a product and date.", "error");
-    const docId = date + "_" + productId;
-    const payload = { date, productId, opening, dispatched, updatedAt: new Date().toISOString() };
+    const docId = date + "_" + productId + (companyId ? "_" + companyId : "");
+    const payload = { date, productId, dispatched, updatedAt: new Date().toISOString() };
+    let companyName = "";
+    if (companyId) {
+      const company = jobCompanyById(companyId);
+      companyName = company ? company.name : companyId;
+      payload.companyId = companyId;
+      payload.companyName = companyName;
+    } else {
+      payload.opening = parseFloat($("#st-opening").value) || 0;
+    }
     try {
       if (state.db) {
         await state.db.collection("stock").doc(docId).set(payload);
@@ -1716,7 +1784,11 @@
         state.stock = state.stock.filter((s) => s.id !== docId);
         state.stock.unshift(payload);
       }
-      toast("Stock entry saved for " + productName(productId) + " on " + date, "success");
+      toast(
+        "Stock entry saved for " + productName(productId) + " on " + date +
+          (companyId ? " — dispatched to " + companyName : ""),
+        "success"
+      );
       renderStock();
     } catch (e) {
       toast("Could not save stock entry: " + e.message, "error");
@@ -1727,18 +1799,23 @@
     if (!$("#view-stock")) return;
     const body = $("#stock-body");
     body.innerHTML = "";
-    const rows = state.stock.slice().sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0)).slice(0, 200);
+    const filterCompany = $("#st-filter-company") ? $("#st-filter-company").value : "";
+    let rows = state.stock.slice();
+    if (filterCompany === "__regular__") rows = rows.filter((s) => !s.companyId);
+    else if (filterCompany) rows = rows.filter((s) => s.companyId === filterCompany);
+    rows = rows.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0)).slice(0, 200);
     if (!rows.length) {
-      body.appendChild(el("tr", {}, [el("td", { colspan: "6", class: "empty-hint" }, ["No stock entries yet."])]));
+      body.appendChild(el("tr", {}, [el("td", { colspan: "7", class: "empty-hint" }, ["No stock entries yet."])]));
       return;
     }
     rows.forEach((s) => {
       const producedMT = producedFor(s.date, s.productId) / KG_PER_MT;
-      const closing = (Number(s.opening) || 0) + producedMT - (Number(s.dispatched) || 0);
+      const closing = closingFor(s.date, s.productId);
       body.appendChild(el("tr", {}, [
         el("td", {}, [s.date]),
         el("td", {}, [productName(s.productId)]),
-        el("td", { class: "num" }, [fmtNum(s.opening, 2)]),
+        el("td", {}, [s.companyId ? (s.companyName || s.companyId) : "—"]),
+        el("td", { class: "num" }, [s.companyId ? "—" : fmtNum(s.opening, 2)]),
         el("td", { class: "num" }, [fmtNum(producedMT, 2)]),
         el("td", { class: "num" }, [fmtNum(s.dispatched, 2)]),
         el("td", { class: "num strong" }, [fmtNum(closing, 2)]),
@@ -2053,6 +2130,8 @@
     $("#st-date").value = todayStr();
     $("#st-product").addEventListener("change", stockAutofillOpening);
     $("#st-date").addEventListener("change", stockAutofillOpening);
+    if ($("#st-company")) $("#st-company").addEventListener("change", stockAutofillOpening);
+    if ($("#st-filter-company")) $("#st-filter-company").addEventListener("change", renderStock);
     $("#btn-stock-save").addEventListener("click", submitStock);
 
     $("#btn-save-rates").addEventListener("click", saveMaterialRates);
