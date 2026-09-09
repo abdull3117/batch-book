@@ -490,8 +490,27 @@
               <input type="number" min="0" step="any" id="s-processing-cost" />
             </div>
           </div>
-          <p class="hint" style="margin-top:4px;">Auto-synced to the breakdown&rsquo;s &#8377;/MT rate below once it&rsquo;s set up. Only used as a flat fallback when no budgeted monthly output is entered.</p>
+          <p class="hint" style="margin-top:4px;">Used for any product that doesn&rsquo;t have its own fallback cost below. Auto-synced to the breakdown&rsquo;s &#8377;/MT rate further down once that&rsquo;s set up (only kicks in as a flat fallback when no budgeted monthly output is entered).</p>
           <button class="btn btn-primary" id="btn-save-labour">Save settings</button>
+        </div>
+
+        <div class="card" style="margin-top:16px;">
+          <div class="card-title">Fallback processing cost by product (&#8377;/batch)</div>
+          <p class="hint">Different products don&rsquo;t cost the same to process even on the same machinery. Pick a product to set its own fallback cost &mdash; it overrides the default above (and the breakdown&rsquo;s &#8377;/MT rate) for that product&rsquo;s batches. Leave a product without one and it keeps using the default.</p>
+          <div class="field-row" style="grid-template-columns:1fr 1fr;">
+            <div class="field">
+              <label for="s-fallback-product">Product</label>
+              <select id="s-fallback-product"></select>
+            </div>
+            <div class="field">
+              <label for="s-fallback-product-cost">Fallback processing cost for this product (&#8377;)</label>
+              <input type="number" min="0" step="any" id="s-fallback-product-cost" placeholder="Using the default above" />
+            </div>
+          </div>
+          <div class="btn-row">
+            <button class="btn btn-primary btn-small" id="btn-save-fallback-product">Save for this product</button>
+            <button class="btn btn-secondary btn-small" id="btn-clear-fallback-product">Clear override</button>
+          </div>
         </div>
 
         <div class="card" style="margin-top:16px;">
@@ -560,7 +579,7 @@
           <div class="card-title">Products</div>
           <div class="table-wrap max-scroll">
             <table>
-              <thead><tr><th>Product</th><th>Unit</th></tr></thead>
+              <thead><tr><th>Product</th><th>Unit</th><th>Fallback processing cost</th></tr></thead>
               <tbody id="settings-products-body"></tbody>
             </table>
           </div>
@@ -608,6 +627,6 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
-<script src="app.js?v=17"></script>
+<script src="app.js?v=18"></script>
 </body>
 </html>

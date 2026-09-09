@@ -264,16 +264,35 @@
     }, 3200);
   }
 
-  function computeCosts(materialsQty, outputQty, operators, loadmen) {
+  // A product can carry its own fallback processing cost (₹/batch) in
+  // Settings — set per product because different products don't cost the
+  // same to process even on the same machinery. When a product has one,
+  // it wins outright for that product's batches; a product without one
+  // falls back to the shared logic below (the monthly breakdown's ₹/MT
+  // rate once budgeted output is set, else the single global default).
+  function productProcessingCostOverride(productId) {
+    if (!productId) return null;
+    const product = state.products.find((p) => p.id === productId);
+    if (!product || product.processingCost === undefined || product.processingCost === null || product.processingCost === "") return null;
+    return Number(product.processingCost) || 0;
+  }
+
+  function computeCosts(materialsQty, outputQty, operators, loadmen, productId) {
     let rmCost = 0;
     state.materials.forEach((m) => {
       const q = Number(materialsQty[m.id]) || 0;
       rmCost += q * (Number(m.rate) || 0);
     });
-    const perMT = processingCostPerMT(state.labour);
-    const processingCost = perMT != null
-      ? perMT * (outputQty / KG_PER_MT)
-      : (Number(state.labour.processingCost) || 0);
+    const override = productProcessingCostOverride(productId);
+    let processingCost;
+    if (override != null) {
+      processingCost = override;
+    } else {
+      const perMT = processingCostPerMT(state.labour);
+      processingCost = perMT != null
+        ? perMT * (outputQty / KG_PER_MT)
+        : (Number(state.labour.processingCost) || 0);
+    }
     const labourCost = (Number(operators) || 0) * (Number(state.labour.operatorRate) || 0) +
       (Number(loadmen) || 0) * (Number(state.labour.loadmanRate) || 0);
     const totalCost = rmCost + processingCost + labourCost;
@@ -813,6 +832,57 @@
     populateStockProductSelect();
     populateReportProductFilter();
     populateJobProductLinkSelect();
+    populateFallbackProductSelect();
+  }
+
+  // Settings > "Fallback processing cost by product" — a plain product
+  // picker (not a ".product-select", so it never gets the "+ Add new
+  // product…" option) that loads/saves each product's own override.
+  function populateFallbackProductSelect() {
+    const sel = $("#s-fallback-product");
+    if (!sel) return;
+    const current = sel.value;
+    sel.innerHTML = "";
+    state.products.forEach((p) => sel.appendChild(el("option", { value: p.id }, [p.name])));
+    if (current && state.products.some((p) => p.id === current)) sel.value = current;
+    loadFallbackProductCost();
+  }
+
+  function loadFallbackProductCost() {
+    const sel = $("#s-fallback-product");
+    const inp = $("#s-fallback-product-cost");
+    if (!sel || !inp) return;
+    const override = productProcessingCostOverride(sel.value);
+    inp.value = override != null ? override : "";
+  }
+
+  async function saveFallbackProductCost(clear) {
+    const sel = $("#s-fallback-product");
+    const inp = $("#s-fallback-product-cost");
+    if (!sel || !sel.value) return toast("Pick a product first.", "error");
+    const idx = state.products.findIndex((p) => p.id === sel.value);
+    if (idx === -1) return;
+    const product = state.products[idx];
+    const updated = Object.assign({}, product);
+    if (clear) {
+      delete updated.processingCost;
+    } else {
+      updated.processingCost = parseFloat(inp.value) || 0;
+    }
+    state.products = state.products.map((p, i) => (i === idx ? updated : p));
+    try {
+      if (state.db) await state.db.doc("settings/products").set({ items: state.products });
+      toast(
+        clear
+          ? "Cleared the fallback override for \"" + product.name + "\" — back to using the default."
+          : "Fallback processing cost for \"" + product.name + "\" set to " + fmtINR(updated.processingCost) + ".",
+        "success"
+      );
+    } catch (e) {
+      toast("Could not save: " + e.message, "error");
+    }
+    loadFallbackProductCost();
+    renderSettingsProducts();
   }
 
   function getFormMaterialsQty() {
@@ -833,7 +903,8 @@
     const operators = parseFloat($("#f-operators").value) || 0;
     const loadmen = parseFloat($("#f-loadmen").value) || 0;
     const mats = getFormMaterialsQty();
-    const c = computeCosts(mats, outputQty, operators, loadmen);
+    const productId = $("#f-product") ? $("#f-product").value : "";
+    const c = computeCosts(mats, outputQty, operators, loadmen, productId);
     $("#sum-rm").textContent = fmtINR(c.rmCost);
     $("#sum-processing").textContent = fmtINR(c.processingCost);
     $("#sum-labour").textContent = fmtINR(c.labourCost);
@@ -907,7 +978,7 @@
     if (outputVal <= 0) return toast("Enter the output quantity produced.", "error");
     if (Object.keys(mats).length === 0) return toast("Enter at least one raw material quantity.", "error");
 
-    const c = computeCosts(mats, outputQty, operators, loadmen);
+    const c = computeCosts(mats, outputQty, operators, loadmen, productId);
     const editingId = state.editingEntryId;
     const existing = editingId ? state.entries.find((e) => e.id === editingId) : null;
     const payload = {
@@ -1916,9 +1987,11 @@
     if (!body) return;
     body.innerHTML = "";
     state.products.forEach((p, idx) => {
+      const hasOverride = p.processingCost !== undefined && p.processingCost !== null && p.processingCost !== "";
       body.appendChild(el("tr", {}, [
         el("td", {}, [p.name]),
         el("td", {}, [buildUnitSelect(p.unit, "row-unit-select", (unit) => updateProductUnit(idx, unit))]),
+        el("td", {}, [hasOverride ? fmtINR(Number(p.processingCost) || 0) : "Using default"]),
       ]));
     });
   }
@@ -2204,6 +2277,11 @@
 
     $("#btn-save-rates").addEventListener("click", saveMaterialRates);
     $("#btn-save-labour").addEventListener("click", saveLabourSettings);
+
+    // Fallback processing cost by product.
+    if ($("#s-fallback-product")) $("#s-fallback-product").addEventListener("change", loadFallbackProductCost);
+    if ($("#btn-save-fallback-product")) $("#btn-save-fallback-product").addEventListener("click", () => saveFallbackProductCost(false));
+    if ($("#btn-clear-fallback-product")) $("#btn-clear-fallback-product").addEventListener("click", () => saveFallbackProductCost(true));
 
     // Processing cost breakdown — live readout as the user types, before saving.
     $("#btn-save-processing-breakdown").addEventListener("click", saveProcessingBreakdown);
