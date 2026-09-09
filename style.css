@@ -125,14 +125,14 @@ button, input, select, textarea { font-family: inherit; font-size: inherit; colo
 }
 .brand { display: flex; align-items: baseline; gap: 10px; margin-right: auto; }
 .brand-mark {
-  width: 40px; height: 40px; border-radius: 14px;
-  background: linear-gradient(155deg, var(--accent), var(--purple));
+  width: 40px; height: 40px; border-radius: 50%;
+  background: var(--surface);
   display: flex; align-items: center; justify-content: center;
-  font-family: var(--font-display); font-weight: 800; color: #fff; font-size: 20px;
+  overflow: hidden;
   flex-shrink: 0;
-  box-shadow: var(--shadow-sm);
-  transform: rotate(-4deg);
+  box-shadow: var(--shadow-sm), 0 0 0 3px var(--accent-soft);
 }
+.brand-mark img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .brand-text h1 { font-size: 1.3rem; font-weight: 800; margin: 0; letter-spacing: -0.01em; color: var(--accent-strong); }
 .brand-text .sub { font-size: .76rem; color: var(--text-muted); margin: 0; font-weight: 600; }
 
