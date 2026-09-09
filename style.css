@@ -419,3 +419,11 @@ td.strong { font-weight: 700; }
 .view-row .k { color: var(--text-muted); font-size: .82rem; font-weight: 600; }
 .view-row .v { font-family: var(--font-mono); font-weight: 700; text-align: right; }
 .view-section-title { font-size: .7rem; text-transform: uppercase; letter-spacing: .05em; color: var(--purple); margin: 14px 0 4px; font-weight: 700; }
+
+/* ---------- Job work profit / loss ---------- */
+.pl-positive { color: var(--success) !important; }
+.pl-negative { color: var(--critical) !important; }
+#jw-sum-profit-box.pl-positive { background: linear-gradient(135deg, var(--success-soft), var(--rust-soft)); }
+#jw-sum-profit-box.pl-negative { background: linear-gradient(135deg, var(--critical-soft), var(--accent-soft)); }
+#jw-sum-profit-box.pl-positive .v, #jw-sum-profit-box.pl-positive .k { color: var(--success); }
+#jw-sum-profit-box.pl-negative .v, #jw-sum-profit-box.pl-negative .k { color: var(--critical); }

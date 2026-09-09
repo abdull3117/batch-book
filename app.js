@@ -6,6 +6,10 @@
      entries/<id>         { date, productId, outputQty, materials:{id:qty}, operators, loadmen,
                              remarks, rmCost, processingCost, labourCost, totalCost, costPerKg, createdAt }
      stock/<date_productId> { date, productId, opening, dispatched, updatedAt }
+     settings/jobwork     { companies: [{id,name,products:[{id,name,ratePerMT,note}]}] }
+     jobwork_entries/<id> { date, companyId, companyName, productId, productName, ratePerMT,
+                             outputQty, materials:{id:qty}, operators, loadmen, remarks,
+                             rmCost, processingCost, labourCost, actualCost, revenue, profit, createdAt }
 */
 
 (function () {
@@ -68,6 +72,35 @@
   const PROCESSING_BREAKDOWN_FIELDS = [
     "ebCost", "fuelCost", "maintenanceCost", "electricalMaintenanceCost",
     "stitchingExpense", "sackExpenses", "departmentExpenses", "staffSalaries",
+  ];
+
+  // ---------------------------------------------------------------
+  // Job work — contract production for outside companies. Each company
+  // pays a fixed ₹/MT job-work rate per product; the app still costs the
+  // batch the normal way (raw materials + processing + labour, using the
+  // same rates/wages as regular production) and shows profit or loss as
+  // revenue (rate × MT produced) minus that actual cost.
+  // ---------------------------------------------------------------
+  const DEFAULT_JOBWORK_COMPANIES = [
+    {
+      id: "co_sfl", name: "Silverline Fertilizers Ltd (SFL)",
+      products: [
+        { id: "sfl_jobwork_mix", name: "Job Work Mix", ratePerMT: 3950, note: "Rock Phosphate ~70%, remaining 30% combination of other materials (reference only — enter actual quantities used)" },
+        { id: "sfl_cms", name: "CMS", ratePerMT: 3950, note: "" },
+      ],
+    },
+    {
+      id: "co_rajshree", name: "Rajshree Bio Solutions",
+      products: [
+        { id: "rajshree_pdm", name: "PDM Granules", ratePerMT: 4250, note: "" },
+      ],
+    },
+    {
+      id: "co_skywin", name: "SKY WIN Biotech",
+      products: [
+        { id: "skywin_jobwork", name: "Job Work", ratePerMT: 6300, note: "" },
+      ],
+    },
   ];
 
   function monthlyProcessingCostTotal(labour) {
@@ -151,6 +184,10 @@
     materialFilter: "",
     reportFilter: { start: "", end: "", productId: "" },
     editingEntryId: null, // set while the form is editing an existing batch instead of logging a new one
+    jobworkCompanies: DEFAULT_JOBWORK_COMPANIES.slice(),
+    jobworkEntries: [],
+    jobworkMaterialFilter: "",
+    editingJobEntryId: null,
   };
 
   // ---------------------------------------------------------------
@@ -195,6 +232,19 @@
   }
   function materialById(id) {
     return state.materials.find((x) => x.id === id);
+  }
+  function jobCompanyById(id) {
+    return state.jobworkCompanies.find((c) => c.id === id);
+  }
+  // Finds a job-work product by id across every company, returning both
+  // the product and its parent company (a product id is only unique
+  // within its company's own product list).
+  function findJobProduct(productId) {
+    for (const c of state.jobworkCompanies) {
+      const p = (c.products || []).find((x) => x.id === productId);
+      if (p) return { company: c, product: p };
+    }
+    return null;
   }
   function toast(msg, kind) {
     const host = $("#toast-host");
@@ -321,6 +371,112 @@
   }
 
   // ---------------------------------------------------------------
+  // Job work — company / product management (rates editable anytime,
+  // e.g. if a client's job-work price changes).
+  // ---------------------------------------------------------------
+  async function saveJobworkCompanies(updated) {
+    state.jobworkCompanies = updated;
+    try {
+      if (state.db) await state.db.doc("settings/jobwork").set({ companies: updated });
+    } catch (e) {
+      toast("Saved, but couldn't sync yet: " + e.message, "warn");
+    }
+  }
+
+  async function addJobCompany(name) {
+    name = (name || "").trim();
+    if (!name) { toast("Enter a company name.", "error"); return null; }
+    if (state.jobworkCompanies.some((c) => c.name.toLowerCase() === name.toLowerCase())) {
+      toast("\"" + name + "\" is already in the list.", "warn");
+      return null;
+    }
+    const item = { id: "co_" + slugify(name) + "_" + Date.now().toString(36), name, products: [] };
+    const updated = state.jobworkCompanies.concat([item]);
+    await saveJobworkCompanies(updated);
+    toast("Added \"" + name + "\" to job work companies.", "success");
+    renderJobCompanies();
+    populateJobCompanySelect();
+    return item;
+  }
+
+  async function addJobProduct(companyId, name, rate, note) {
+    name = (name || "").trim();
+    const company = jobCompanyById(companyId);
+    if (!company) { toast("Pick a company first.", "error"); return null; }
+    if (!name) { toast("Enter a product name.", "error"); return null; }
+    if ((company.products || []).some((p) => p.name.toLowerCase() === name.toLowerCase())) {
+      toast("\"" + name + "\" is already under " + company.name + ".", "warn");
+      return null;
+    }
+    const item = {
+      id: "jwp_" + slugify(name) + "_" + Date.now().toString(36),
+      name, ratePerMT: Number(rate) || 0, note: (note || "").trim(),
+    };
+    const updated = state.jobworkCompanies.map((c) =>
+      c.id === companyId ? Object.assign({}, c, { products: (c.products || []).concat([item]) }) : c
+    );
+    await saveJobworkCompanies(updated);
+    toast("Added \"" + name + "\" under " + company.name + ".", "success");
+    renderJobCompanies();
+    populateJobCompanySelect();
+    return item;
+  }
+
+  // Reads every rate input currently on screen and saves them all in one go
+  // — used when a client's job-work price changes.
+  async function saveJobRates() {
+    const inputs = $all(".jw-rate-input");
+    const updated = state.jobworkCompanies.map((c) => Object.assign({}, c, {
+      products: (c.products || []).map((p) => {
+        const inp = inputs.find((i) => i.dataset.companyId === c.id && i.dataset.productId === p.id);
+        return inp ? Object.assign({}, p, { ratePerMT: Number(inp.value) || 0 }) : p;
+      }),
+    }));
+    await saveJobworkCompanies(updated);
+    toast("Job work rates saved.", "success");
+    renderJobCompanies();
+    updateJobLiveSummary();
+  }
+
+  function renderJobCompanies() {
+    const body = $("#jw-companies-body");
+    if (!body) return;
+    body.innerHTML = "";
+    const isTeam = state.role === "team";
+    if (!state.jobworkCompanies.length) {
+      body.appendChild(el("tr", {}, [el("td", { colspan: "4", class: "empty-hint" }, ["No job work companies added yet."])]));
+      return;
+    }
+    state.jobworkCompanies.forEach((c) => {
+      const products = c.products || [];
+      if (!products.length) {
+        body.appendChild(el("tr", {}, [
+          el("td", {}, [c.name]),
+          el("td", { class: "empty-hint" }, ["No products added yet"]),
+          el("td", {}, [""]),
+          el("td", { class: "num" }, [""]),
+        ]));
+        return;
+      }
+      products.forEach((p, idx) => {
+        body.appendChild(el("tr", {}, [
+          el("td", {}, [idx === 0 ? c.name : ""]),
+          el("td", {}, [p.name]),
+          el("td", { style: "max-width:260px; white-space:normal; color:var(--text-faint); font-size:.78rem;" }, [p.note || ""]),
+          el("td", { class: "num" }, [
+            isTeam
+              ? fmtINR(p.ratePerMT)
+              : el("input", {
+                  type: "number", min: "0", step: "any", class: "rate-input jw-rate-input",
+                  "data-company-id": c.id, "data-product-id": p.id, value: p.ratePerMT,
+                }),
+          ]),
+        ]));
+      });
+    });
+  }
+
+  // ---------------------------------------------------------------
   // Sync status
   // ---------------------------------------------------------------
   function setSyncStatus(status) {
@@ -372,6 +528,7 @@
         }
         renderSettingsMaterials();
         rebuildMaterialGrid();
+        rebuildJobMaterialGrid();
       },
       () => {}
     );
@@ -383,6 +540,21 @@
         }
         renderSettingsProducts();
         populateProductSelects();
+      },
+      () => {}
+    );
+    db.doc("settings/jobwork").onSnapshot(
+      (snap) => {
+        if (snap.exists) {
+          const data = snap.data();
+          if (Array.isArray(data.companies) && data.companies.length) state.jobworkCompanies = data.companies;
+        } else {
+          // First time the app has ever run — seed the doc with the
+          // starting companies so they can be edited from the Job Work tab.
+          db.doc("settings/jobwork").set({ companies: DEFAULT_JOBWORK_COMPANIES }).catch(() => {});
+        }
+        renderJobCompanies();
+        populateJobCompanySelect();
       },
       () => {}
     );
@@ -436,6 +608,14 @@
         renderStock();
       },
       (e) => { toast("Sync error loading entries: " + e.message, "error"); }
+    );
+    db.collection("jobwork_entries").orderBy("createdAt", "desc").limit(500).onSnapshot(
+      (snap) => {
+        state.jobworkEntries = snap.docs.map((d) => Object.assign({ id: d.id }, d.data()));
+        renderJobTodayList();
+        renderJobPnL();
+      },
+      (e) => { toast("Sync error loading job work batches: " + e.message, "error"); }
     );
     db.collection("stock").orderBy("date", "desc").limit(500).onSnapshot(
       (snap) => {
@@ -518,11 +698,16 @@
     if (settingsTab) settingsTab.hidden = isTeam;
     const costBlock = $("#cost-details-block");
     if (costBlock) costBlock.hidden = isTeam;
+    // Job work rates can be viewed by anyone, but only admin can add
+    // companies/products or change a rate.
+    const jwAdminTools = $("#jw-admin-tools");
+    if (jwAdminTools) jwAdminTools.hidden = isTeam;
 
     // If a team member was mid-way on an admin-only tab (or is being
     // switched down from admin), bounce them back to Log Batch.
     if (isTeam && ADMIN_ONLY_TABS.indexOf(state.activeTab) !== -1) switchTab("entry");
     renderTodayList();
+    renderJobCompanies();
   }
 
   // ---------------------------------------------------------------
@@ -860,10 +1045,12 @@
   // form. Costs/rates are omitted for the team role, same as elsewhere.
   // ---------------------------------------------------------------
   let viewedEntry = null;
+  let viewedEntryKind = "batch"; // "batch" | "jobwork" — which edit fn "Edit this batch" should call
 
   function viewEntry(entry) {
     if (!entry) return;
     viewedEntry = entry;
+    viewedEntryKind = "batch";
     $("#view-modal-title").textContent = productName(entry.productId) + " — " + entry.date;
     const body = $("#view-modal-body");
     body.innerHTML = "";
@@ -939,6 +1126,528 @@
       toast("Batch deleted.", "warn");
     } catch (e) {
       toast("Could not delete: " + e.message, "error");
+    }
+  }
+
+  // ---------------------------------------------------------------
+  // JOB WORK TAB — log contract-production batches for outside
+  // companies and track profit/loss against each product's fixed
+  // ₹/MT job-work rate. Mirrors the Log Batch flow above; actual cost
+  // uses the exact same computeCosts() as regular batches.
+  // ---------------------------------------------------------------
+  function populateJobCompanySelect() {
+    const sel = $("#jw-company");
+    if (!sel) return;
+    const current = sel.value;
+    sel.innerHTML = "";
+    sel.appendChild(el("option", { value: "" }, ["Select company…"]));
+    state.jobworkCompanies.forEach((c) => sel.appendChild(el("option", { value: c.id }, [c.name])));
+    if (current) sel.value = current;
+    populateJobProductSelect();
+
+    const addSel = $("#jw-new-product-company");
+    if (addSel) {
+      const cur2 = addSel.value;
+      addSel.innerHTML = "";
+      state.jobworkCompanies.forEach((c) => addSel.appendChild(el("option", { value: c.id }, [c.name])));
+      if (cur2) addSel.value = cur2;
+    }
+
+    const repSel = $("#jw-rep-company");
+    if (repSel) {
+      const cur3 = repSel.value;
+      repSel.innerHTML = "";
+      repSel.appendChild(el("option", { value: "" }, ["All companies"]));
+      state.jobworkCompanies.forEach((c) => repSel.appendChild(el("option", { value: c.id }, [c.name])));
+      if (cur3) repSel.value = cur3;
+    }
+  }
+
+  function populateJobProductSelect() {
+    const companySel = $("#jw-company");
+    const productSel = $("#jw-product");
+    if (!companySel || !productSel) return;
+    const current = productSel.value;
+    const company = jobCompanyById(companySel.value);
+    productSel.innerHTML = "";
+    productSel.appendChild(el("option", { value: "" }, ["Select product…"]));
+    (company ? company.products || [] : []).forEach((p) => {
+      productSel.appendChild(el("option", { value: p.id }, [p.name + " — " + fmtINR(p.ratePerMT) + "/MT"]));
+    });
+    if (current) productSel.value = current;
+    updateJobProductNote();
+  }
+
+  function updateJobProductNote() {
+    const noteEl = $("#jw-product-note");
+    if (!noteEl) return;
+    const found = findJobProduct($("#jw-product") ? $("#jw-product").value : "");
+    if (found && found.product.note) {
+      noteEl.textContent = "Note: " + found.product.note;
+      noteEl.hidden = false;
+    } else {
+      noteEl.hidden = true;
+      noteEl.textContent = "";
+    }
+  }
+
+  function rebuildJobMaterialGrid() {
+    const grid = $("#jw-material-grid");
+    if (!grid) return;
+    const filter = state.jobworkMaterialFilter.trim().toLowerCase();
+    grid.innerHTML = "";
+    state.materials.forEach((m) => {
+      if (filter && m.name.toLowerCase().indexOf(filter) === -1) return;
+      const input = el("input", {
+        type: "number", min: "0", step: "any", inputmode: "decimal",
+        class: "mat-input jw-mat-input", "data-mat": m.id, placeholder: "0",
+      });
+      const row = el("div", { class: "mat-row" }, [
+        el("label", { class: "mat-label" }, [
+          el("span", { class: "mat-name", title: m.name }, [m.name]),
+          el("span", { class: "mat-unit" }, [m.unit]),
+        ]),
+        input,
+      ]);
+      grid.appendChild(row);
+    });
+  }
+
+  function getJobFormMaterialsQty() {
+    const out = {};
+    $all(".jw-mat-input").forEach((inp) => {
+      const v = parseFloat(inp.value);
+      if (v > 0) out[inp.dataset.mat] = v;
+    });
+    return out;
+  }
+
+  function updateJobLiveSummary() {
+    const outputVal = parseFloat($("#jw-output").value) || 0;
+    const outputUnit = $("#jw-output-unit").value;
+    const outputQty = outputToKg(outputVal, outputUnit);
+    const operators = parseFloat($("#jw-operators").value) || 0;
+    const loadmen = parseFloat($("#jw-loadmen").value) || 0;
+    const mats = getJobFormMaterialsQty();
+    const c = computeCosts(mats, outputQty, operators, loadmen);
+    const found = findJobProduct($("#jw-product") ? $("#jw-product").value : "");
+    const ratePerMT = found ? Number(found.product.ratePerMT) || 0 : 0;
+    const revenue = ratePerMT * (outputQty / KG_PER_MT);
+    const profit = revenue - c.totalCost;
+
+    $("#jw-sum-rm").textContent = fmtINR(c.rmCost);
+    $("#jw-sum-processing").textContent = fmtINR(c.processingCost);
+    $("#jw-sum-labour").textContent = fmtINR(c.labourCost);
+    $("#jw-sum-cost").textContent = fmtINR(c.totalCost);
+    $("#jw-sum-revenue").textContent = fmtINR(revenue);
+    const profitEl = $("#jw-sum-profit");
+    profitEl.textContent = (profit < 0 ? "-" : "") + fmtINR(Math.abs(profit));
+    const profitBox = $("#jw-sum-profit-box");
+    if (profitBox) {
+      profitBox.classList.remove("pl-positive", "pl-negative");
+      profitBox.classList.add(profit < 0 ? "pl-negative" : "pl-positive");
+    }
+    const usedCount = Object.keys(mats).length;
+    $("#jw-sum-mat-count").textContent = usedCount + (usedCount === 1 ? " material used" : " materials used");
+  }
+
+  async function submitJobEntry() {
+    const date = $("#jw-date").value;
+    const companyId = $("#jw-company").value;
+    const productId = $("#jw-product").value;
+    const outputVal = parseFloat($("#jw-output").value) || 0;
+    const outputUnit = $("#jw-output-unit").value;
+    const outputQty = outputToKg(outputVal, outputUnit);
+    const operators = parseFloat($("#jw-operators").value) || 0;
+    const loadmen = parseFloat($("#jw-loadmen").value) || 0;
+    const remarks = $("#jw-remarks").value.trim();
+    const mats = getJobFormMaterialsQty();
+
+    if (!date) return toast("Pick a date first.", "error");
+    if (!companyId) return toast("Pick a company first.", "error");
+    const found = findJobProduct(productId);
+    if (!found) return toast("Pick a product first.", "error");
+    if (outputVal <= 0) return toast("Enter the output quantity produced.", "error");
+    if (Object.keys(mats).length === 0) return toast("Enter at least one raw material quantity.", "error");
+
+    const c = computeCosts(mats, outputQty, operators, loadmen);
+    const ratePerMT = Number(found.product.ratePerMT) || 0;
+    const revenue = ratePerMT * (outputQty / KG_PER_MT);
+    const profit = revenue - c.totalCost;
+
+    const editingId = state.editingJobEntryId;
+    const existing = editingId ? state.jobworkEntries.find((e) => e.id === editingId) : null;
+    const payload = {
+      date, companyId, companyName: found.company.name, productId, productName: found.product.name,
+      ratePerMT, outputQty, materials: mats, operators, loadmen, remarks,
+      rmCost: c.rmCost, processingCost: c.processingCost, labourCost: c.labourCost,
+      actualCost: c.totalCost, revenue, profit,
+      createdAt: (existing && existing.createdAt) || new Date().toISOString(),
+    };
+    if (editingId) payload.updatedAt = new Date().toISOString();
+
+    const btn = $("#jw-btn-submit");
+    btn.disabled = true;
+    btn.textContent = editingId ? "Updating…" : "Saving…";
+    try {
+      const unitLabel = outputUnit === "Metric Tonne" ? "MT" : outputUnit;
+      if (state.db) {
+        if (editingId) {
+          await state.db.collection("jobwork_entries").doc(editingId).set(payload);
+          toast("Job work batch updated — " + found.product.name + ", " + fmtNum(outputVal, 2) + " " + unitLabel + ".", "success");
+        } else {
+          await state.db.collection("jobwork_entries").add(payload);
+          toast("Job work batch saved — " + found.product.name + ", " + fmtNum(outputVal, 2) + " " + unitLabel + ".", "success");
+        }
+      } else {
+        if (editingId) {
+          const idx = state.jobworkEntries.findIndex((e) => e.id === editingId);
+          if (idx !== -1) state.jobworkEntries[idx] = Object.assign({ id: editingId }, payload);
+          toast("Job work batch updated locally (preview only).", "warn");
+        } else {
+          payload.id = "local_" + Date.now();
+          state.jobworkEntries.unshift(payload);
+          toast("Saved locally (preview only — open the published link to sync).", "warn");
+        }
+        renderJobTodayList();
+        renderJobPnL();
+      }
+      state.editingJobEntryId = null;
+      if ($("#jw-edit-banner")) $("#jw-edit-banner").hidden = true;
+      resetJobEntryForm(date);
+      $("#jobwork-entry-form").scrollIntoView({ behavior: "smooth", block: "start" });
+      $("#jw-company").focus();
+    } catch (e) {
+      toast("Could not save: " + (e && e.message ? e.message : "unknown error"), "error");
+    } finally {
+      btn.disabled = false;
+      btn.textContent = state.editingJobEntryId ? "Update job work batch" : "Save job work batch";
+    }
+  }
+
+  function resetJobEntryForm(keepDate) {
+    $("#jw-company").value = "";
+    populateJobProductSelect();
+    $("#jw-output").value = "";
+    $("#jw-operators").value = "";
+    $("#jw-loadmen").value = "";
+    $("#jw-remarks").value = "";
+    $all(".jw-mat-input").forEach((i) => (i.value = ""));
+    if (keepDate) $("#jw-date").value = keepDate;
+    updateJobLiveSummary();
+  }
+
+  function populateJobDateJump(dateVal) {
+    const sel = $("#jw-date-jump");
+    if (!sel) return;
+    dateVal = dateVal || ($("#jw-date") ? $("#jw-date").value || todayStr() : todayStr());
+    const counts = {};
+    state.jobworkEntries.forEach((e) => { if (e.date) counts[e.date] = (counts[e.date] || 0) + 1; });
+    if (!(dateVal in counts)) counts[dateVal] = 0;
+    const dates = Object.keys(counts).sort().reverse();
+    sel.innerHTML = "";
+    dates.forEach((d) => {
+      const n = counts[d];
+      sel.appendChild(el("option", { value: d }, [d + " (" + n + (n === 1 ? " batch)" : " batches)")]));
+    });
+    sel.value = dateVal;
+  }
+
+  function renderJobTodayList() {
+    const host = $("#jw-today-list");
+    if (!host) return;
+    const dateVal = $("#jw-date") ? $("#jw-date").value || todayStr() : todayStr();
+    populateJobDateJump(dateVal);
+    const rows = state.jobworkEntries.filter((e) => e.date === dateVal);
+    $("#jw-today-list-label").textContent = "Job work batches for " + dateVal +
+      (rows.length ? " (" + rows.length + (rows.length === 1 ? " batch" : " batches") + ")" : "");
+    host.innerHTML = "";
+    if (!rows.length) {
+      host.appendChild(el("div", { class: "empty-hint" }, ["No job work batches logged for this date yet."]));
+      return;
+    }
+    rows.forEach((r) => {
+      const outputMTVal = (r.outputQty || 0) / KG_PER_MT;
+      const profit = r.profit || 0;
+      const metaText = fmtNum(outputMTVal, 2) + " MT · " + r.companyName + " · " +
+        (profit < 0 ? "-" : "") + fmtINR(Math.abs(profit)) + (profit < 0 ? " loss" : " profit");
+      const row = el("div", { class: "today-row" }, [
+        el("div", { class: "today-main" }, [
+          el("span", { class: "today-product" }, [r.productName || productNameFallback(r)]),
+          el("span", { class: "today-meta " + (profit < 0 ? "pl-negative" : "pl-positive") }, [metaText]),
+        ]),
+        el("div", { class: "today-actions" }, [
+          el("button", { class: "icon-btn", title: "View this batch's full details", onclick: () => viewJobEntry(r) }, ["\u{1F441}"]),
+          el("button", { class: "icon-btn", title: "Edit this batch", onclick: () => editJobEntry(r) }, ["✎"]),
+          el("button", { class: "icon-btn", title: "Load this batch onto the form to log a similar one", onclick: () => duplicateJobEntry(r) }, ["⧉"]),
+          el("button", { class: "icon-btn danger", title: "Delete this batch", onclick: () => deleteJobEntry(r.id) }, ["✕"]),
+        ]),
+      ]);
+      if (state.editingJobEntryId === r.id) row.classList.add("today-row-editing");
+      host.appendChild(row);
+    });
+  }
+  function productNameFallback(r) { return r.productName || r.productId || "—"; }
+
+  function fillJobFormFromEntry(entry, opts) {
+    if (!entry) return;
+    opts = opts || {};
+    $("#jw-company").value = entry.companyId || "";
+    populateJobProductSelect();
+    $("#jw-product").value = entry.productId || "";
+    updateJobProductNote();
+    $("#jw-output").value = entry.outputQty ? entry.outputQty / KG_PER_MT : "";
+    if ($("#jw-output-unit")) $("#jw-output-unit").value = "Metric Tonne";
+    $("#jw-operators").value = entry.operators || "";
+    $("#jw-loadmen").value = entry.loadmen || "";
+    $("#jw-remarks").value = opts.keepRemarks ? (entry.remarks || "") : "";
+    const mats = entry.materials || {};
+    $all(".jw-mat-input").forEach((inp) => {
+      const v = mats[inp.dataset.mat];
+      inp.value = v != null ? v : "";
+    });
+    updateJobLiveSummary();
+  }
+
+  function exitJobEditMode() {
+    state.editingJobEntryId = null;
+    if ($("#jw-edit-banner")) $("#jw-edit-banner").hidden = true;
+    if ($("#jw-btn-submit")) $("#jw-btn-submit").textContent = "Save job work batch";
+  }
+
+  function duplicateJobEntry(entry) {
+    exitJobEditMode();
+    fillJobFormFromEntry(entry);
+    toast("Loaded " + (entry.productName || "") + " onto the form — adjust and save as a new batch.", "success");
+    $("#jobwork-entry-form").scrollIntoView({ behavior: "smooth", block: "start" });
+    $("#jw-output").focus();
+  }
+
+  function editJobEntry(entry) {
+    if (!entry) return;
+    state.editingJobEntryId = entry.id;
+    fillJobFormFromEntry(entry, { keepRemarks: true });
+    $("#jw-date").value = entry.date || todayStr();
+    if ($("#jw-edit-banner")) $("#jw-edit-banner").hidden = false;
+    if ($("#jw-edit-banner-text")) {
+      $("#jw-edit-banner-text").textContent = "Editing " + (entry.productName || "") + " for " + (entry.companyName || "") + " — " + entry.date + ".";
+    }
+    if ($("#jw-btn-submit")) $("#jw-btn-submit").textContent = "Update job work batch";
+    renderJobTodayList();
+    toast("Editing this job work batch — change the fields and save, or cancel to leave it as-is.", "success");
+    $("#jobwork-entry-form").scrollIntoView({ behavior: "smooth", block: "start" });
+    $("#jw-output").focus();
+  }
+
+  function cancelJobEdit() {
+    if (!state.editingJobEntryId) return;
+    exitJobEditMode();
+    resetJobEntryForm($("#jw-date").value || todayStr());
+    renderJobTodayList();
+    toast("Edit cancelled — nothing was changed.", "warn");
+  }
+
+  function viewJobEntry(entry) {
+    if (!entry) return;
+    viewedEntry = entry;
+    viewedEntryKind = "jobwork";
+    $("#view-modal-title").textContent = (entry.productName || "") + " — " + entry.companyName + " — " + entry.date;
+    const body = $("#view-modal-body");
+    body.innerHTML = "";
+    const rows = [
+      ["Date", entry.date || "—"],
+      ["Company", entry.companyName || "—"],
+      ["Product", entry.productName || "—"],
+      ["Output", fmtNum((entry.outputQty || 0) / KG_PER_MT, 2) + " MT"],
+      ["Operators", fmtNum(entry.operators || 0, 0)],
+      ["Loadmen", fmtNum(entry.loadmen || 0, 0)],
+    ];
+    rows.forEach(([k, v]) => {
+      body.appendChild(el("div", { class: "view-row" }, [
+        el("span", { class: "k" }, [k]), el("span", { class: "v" }, [String(v)]),
+      ]));
+    });
+
+    const mats = entry.materials || {};
+    const matIds = Object.keys(mats);
+    if (matIds.length) {
+      body.appendChild(el("div", { class: "view-section-title" }, ["Raw materials used"]));
+      matIds.forEach((id) => {
+        const m = materialById(id);
+        body.appendChild(el("div", { class: "view-row" }, [
+          el("span", { class: "k" }, [m ? m.name : id]),
+          el("span", { class: "v" }, [fmtNum(mats[id], 2) + " " + (m ? m.unit : "")]),
+        ]));
+      });
+    }
+
+    if (entry.remarks) {
+      body.appendChild(el("div", { class: "view-section-title" }, ["Remarks"]));
+      body.appendChild(el("div", { class: "view-row" }, [el("span", { class: "k" }, [entry.remarks])]));
+    }
+
+    body.appendChild(el("div", { class: "view-section-title" }, ["Job work profit / loss"]));
+    const profit = entry.profit || 0;
+    [
+      ["Raw material cost", fmtINR(entry.rmCost)],
+      ["Processing cost", fmtINR(entry.processingCost)],
+      ["Labour cost", fmtINR(entry.labourCost)],
+      ["Actual cost", fmtINR(entry.actualCost)],
+      ["Rate (₹/MT)", fmtINR(entry.ratePerMT)],
+      ["Revenue", fmtINR(entry.revenue)],
+      ["Profit / loss", (profit < 0 ? "-" : "") + fmtINR(Math.abs(profit))],
+    ].forEach(([k, v]) => {
+      body.appendChild(el("div", { class: "view-row" }, [
+        el("span", { class: "k" }, [k]), el("span", { class: "v" }, [v]),
+      ]));
+    });
+
+    $("#view-modal").hidden = false;
+  }
+
+  async function deleteJobEntry(id) {
+    if (!id) return;
+    if (!confirm("Delete this job work batch? This can't be undone.")) return;
+    try {
+      if (state.db && !String(id).startsWith("local_")) {
+        await state.db.collection("jobwork_entries").doc(id).delete();
+      } else {
+        state.jobworkEntries = state.jobworkEntries.filter((e) => e.id !== id);
+        renderJobTodayList();
+        renderJobPnL();
+      }
+      if (state.editingJobEntryId === id) {
+        exitJobEditMode();
+        resetJobEntryForm($("#jw-date").value || todayStr());
+      }
+      toast("Job work batch deleted.", "warn");
+    } catch (e) {
+      toast("Could not delete: " + e.message, "error");
+    }
+  }
+
+  // Profit & loss — date range + company filter over jobwork_entries,
+  // with per-company and day-by-day breakdowns.
+  function filteredJobEntries() {
+    const start = $("#jw-rep-start") ? $("#jw-rep-start").value : "";
+    const end = $("#jw-rep-end") ? $("#jw-rep-end").value : "";
+    const companyId = $("#jw-rep-company") ? $("#jw-rep-company").value : "";
+    return state.jobworkEntries.filter((e) => {
+      if (start && e.date < start) return false;
+      if (end && e.date > end) return false;
+      if (companyId && e.companyId !== companyId) return false;
+      return true;
+    });
+  }
+
+  function renderJobPnL() {
+    if (!$("#view-jobwork")) return;
+    const rows = filteredJobEntries();
+
+    const totalBatches = rows.length;
+    const totalOutput = rows.reduce((s, r) => s + (r.outputQty || 0), 0);
+    const totalRevenue = rows.reduce((s, r) => s + (r.revenue || 0), 0);
+    const totalCost = rows.reduce((s, r) => s + (r.actualCost || 0), 0);
+    const totalProfit = totalRevenue - totalCost;
+
+    if ($("#jw-tile-batches")) $("#jw-tile-batches").textContent = fmtNum(totalBatches, 0);
+    if ($("#jw-tile-output")) $("#jw-tile-output").textContent = fmtNum(totalOutput / KG_PER_MT, 2) + " MT";
+    if ($("#jw-tile-revenue")) $("#jw-tile-revenue").textContent = fmtINR(totalRevenue);
+    const profitTile = $("#jw-tile-profit");
+    if (profitTile) {
+      profitTile.textContent = (totalProfit < 0 ? "-" : "") + fmtINR(Math.abs(totalProfit));
+      profitTile.classList.remove("pl-positive", "pl-negative");
+      profitTile.classList.add(totalProfit < 0 ? "pl-negative" : "pl-positive");
+    }
+
+    // per-company aggregation
+    const byCompany = {};
+    rows.forEach((r) => {
+      const k = r.companyId;
+      if (!byCompany[k]) byCompany[k] = { companyId: k, companyName: r.companyName, batches: 0, output: 0, revenue: 0, cost: 0 };
+      byCompany[k].batches += 1;
+      byCompany[k].output += r.outputQty || 0;
+      byCompany[k].revenue += r.revenue || 0;
+      byCompany[k].cost += r.actualCost || 0;
+    });
+    const companyAgg = Object.values(byCompany).sort((a, b) => b.revenue - a.revenue);
+    const companyBody = $("#jw-company-report-body");
+    if (companyBody) {
+      companyBody.innerHTML = "";
+      if (!companyAgg.length) {
+        companyBody.appendChild(el("tr", {}, [el("td", { colspan: "6", class: "empty-hint" }, ["No job work batches in this range yet."])]));
+      } else {
+        companyAgg.forEach((a) => {
+          const p = a.revenue - a.cost;
+          companyBody.appendChild(el("tr", {}, [
+            el("td", {}, [a.companyName || a.companyId]),
+            el("td", { class: "num" }, [fmtNum(a.batches, 0)]),
+            el("td", { class: "num" }, [fmtNum(a.output / KG_PER_MT, 2)]),
+            el("td", { class: "num" }, [fmtINR(a.revenue)]),
+            el("td", { class: "num" }, [fmtINR(a.cost)]),
+            el("td", { class: "num strong " + (p < 0 ? "pl-negative" : "pl-positive") }, [(p < 0 ? "-" : "") + fmtINR(Math.abs(p))]),
+          ]));
+        });
+      }
+    }
+
+    // day-by-day aggregation
+    const byDay = {};
+    rows.forEach((r) => {
+      const k = r.date;
+      if (!byDay[k]) byDay[k] = { date: k, batches: 0, output: 0, revenue: 0, cost: 0 };
+      byDay[k].batches += 1;
+      byDay[k].output += r.outputQty || 0;
+      byDay[k].revenue += r.revenue || 0;
+      byDay[k].cost += r.actualCost || 0;
+    });
+    const dayAgg = Object.values(byDay).sort((a, b) => (a.date < b.date ? 1 : -1));
+    const dayBody = $("#jw-daily-report-body");
+    if (dayBody) {
+      dayBody.innerHTML = "";
+      if (!dayAgg.length) {
+        dayBody.appendChild(el("tr", {}, [el("td", { colspan: "6", class: "empty-hint" }, ["No job work batches in this range yet."])]));
+      } else {
+        dayAgg.forEach((a) => {
+          const p = a.revenue - a.cost;
+          dayBody.appendChild(el("tr", {}, [
+            el("td", {}, [a.date]),
+            el("td", { class: "num" }, [fmtNum(a.batches, 0)]),
+            el("td", { class: "num" }, [fmtNum(a.output / KG_PER_MT, 2)]),
+            el("td", { class: "num" }, [fmtINR(a.revenue)]),
+            el("td", { class: "num" }, [fmtINR(a.cost)]),
+            el("td", { class: "num strong " + (p < 0 ? "pl-negative" : "pl-positive") }, [(p < 0 ? "-" : "") + fmtINR(Math.abs(p))]),
+          ]));
+        });
+      }
+    }
+
+    // full batch log
+    const logBody = $("#jw-batch-log-body");
+    if (logBody) {
+      logBody.innerHTML = "";
+      if (!rows.length) {
+        logBody.appendChild(el("tr", {}, [el("td", { colspan: "8", class: "empty-hint" }, ["No job work batches logged in this range."])]));
+      } else {
+        rows.slice().sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0)).forEach((r) => {
+          const p = r.profit || 0;
+          logBody.appendChild(el("tr", {}, [
+            el("td", {}, [r.date]),
+            el("td", {}, [r.companyName || r.companyId]),
+            el("td", {}, [r.productName || r.productId]),
+            el("td", { class: "num" }, [fmtNum((r.outputQty || 0) / KG_PER_MT, 2)]),
+            el("td", { class: "num" }, [fmtINR(r.revenue)]),
+            el("td", { class: "num" }, [fmtINR(r.actualCost)]),
+            el("td", { class: "num strong " + (p < 0 ? "pl-negative" : "pl-positive") }, [(p < 0 ? "-" : "") + fmtINR(Math.abs(p))]),
+            el("td", { class: "num" }, [
+              el("div", { class: "today-actions", style: "justify-content:flex-end;" }, [
+                el("button", { class: "icon-btn", title: "View this batch's full details", onclick: () => viewJobEntry(r) }, ["\u{1F441}"]),
+                el("button", { class: "icon-btn", title: "Edit this batch", onclick: () => editJobEntry(r) }, ["✎"]),
+              ]),
+            ]),
+          ]));
+        });
+      }
     }
   }
 
@@ -1429,8 +2138,9 @@
       $("#btn-view-edit").addEventListener("click", () => {
         if (!viewedEntry) return;
         const entry = viewedEntry;
+        const kind = viewedEntryKind;
         closeViewModal();
-        editEntry(entry);
+        if (kind === "jobwork") editJobEntry(entry); else editEntry(entry);
       });
     }
     $("#mat-search").addEventListener("input", (e) => {
@@ -1556,6 +2266,106 @@
       "#s-stitching-expense", "#s-sack-expenses", "#s-department-expenses", "#s-staff-salaries",
       "#s-budgeted-output-mt",
     ].forEach((sel) => $(sel).addEventListener("input", updateProcessingBreakdownReadout));
+
+    // Job Work tab
+    if ($("#jw-date")) {
+      $("#jw-date").value = todayStr();
+      $("#jw-date").addEventListener("change", renderJobTodayList);
+    }
+    if ($("#jw-date-jump")) {
+      $("#jw-date-jump").addEventListener("change", () => {
+        const v = $("#jw-date-jump").value;
+        if (!v) return;
+        exitJobEditMode();
+        $("#jw-date").value = v;
+        renderJobTodayList();
+        $("#jw-today-list-label").scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+    }
+    if ($("#jobwork-entry-form")) $("#jobwork-entry-form").addEventListener("input", updateJobLiveSummary);
+    if ($("#jw-btn-submit")) $("#jw-btn-submit").addEventListener("click", submitJobEntry);
+    if ($("#jw-btn-cancel-edit")) $("#jw-btn-cancel-edit").addEventListener("click", cancelJobEdit);
+    if ($("#jw-mat-search")) {
+      $("#jw-mat-search").addEventListener("input", (e) => {
+        state.jobworkMaterialFilter = e.target.value;
+        rebuildJobMaterialGrid();
+      });
+    }
+    if ($("#jw-company")) $("#jw-company").addEventListener("change", () => { populateJobProductSelect(); updateJobLiveSummary(); });
+    if ($("#jw-product")) $("#jw-product").addEventListener("change", () => { updateJobProductNote(); updateJobLiveSummary(); });
+
+    // Job Work — company / product management (admin only)
+    if ($("#jw-btn-show-add-company")) {
+      $("#jw-btn-show-add-company").addEventListener("click", () => {
+        $("#jw-add-company-row").hidden = false;
+        $("#jw-new-company-name").focus();
+      });
+    }
+    if ($("#jw-btn-cancel-add-company")) {
+      $("#jw-btn-cancel-add-company").addEventListener("click", () => {
+        $("#jw-add-company-row").hidden = true;
+        $("#jw-new-company-name").value = "";
+      });
+    }
+    if ($("#jw-btn-confirm-add-company")) {
+      $("#jw-btn-confirm-add-company").addEventListener("click", async () => {
+        const item = await addJobCompany($("#jw-new-company-name").value);
+        if (item) {
+          $("#jw-new-company-name").value = "";
+          $("#jw-add-company-row").hidden = true;
+        }
+      });
+    }
+    if ($("#jw-btn-show-add-product")) {
+      $("#jw-btn-show-add-product").addEventListener("click", () => {
+        $("#jw-add-product-row").hidden = false;
+        $("#jw-new-product-name").focus();
+      });
+    }
+    if ($("#jw-btn-cancel-add-product")) {
+      $("#jw-btn-cancel-add-product").addEventListener("click", () => {
+        $("#jw-add-product-row").hidden = true;
+        $("#jw-new-product-name").value = "";
+        $("#jw-new-product-rate").value = "";
+        $("#jw-new-product-note").value = "";
+      });
+    }
+    if ($("#jw-btn-confirm-add-product")) {
+      $("#jw-btn-confirm-add-product").addEventListener("click", async () => {
+        const item = await addJobProduct(
+          $("#jw-new-product-company").value,
+          $("#jw-new-product-name").value,
+          $("#jw-new-product-rate").value,
+          $("#jw-new-product-note").value
+        );
+        if (item) {
+          $("#jw-new-product-name").value = "";
+          $("#jw-new-product-rate").value = "";
+          $("#jw-new-product-note").value = "";
+          $("#jw-add-product-row").hidden = true;
+        }
+      });
+    }
+    if ($("#jw-btn-save-rates")) $("#jw-btn-save-rates").addEventListener("click", saveJobRates);
+
+    // Job Work — profit & loss filters
+    if ($("#jw-rep-start")) {
+      ["#jw-rep-start", "#jw-rep-end", "#jw-rep-company"].forEach((sel) => {
+        $(sel).addEventListener("change", renderJobPnL);
+      });
+      $("#jw-rep-start").value = monthStartStr();
+      $("#jw-rep-end").value = todayStr();
+      $("#jw-rep-preset-month").addEventListener("click", () => {
+        $("#jw-rep-start").value = monthStartStr();
+        $("#jw-rep-end").value = todayStr();
+        renderJobPnL();
+      });
+      $("#jw-rep-preset-all").addEventListener("click", () => {
+        $("#jw-rep-start").value = "";
+        $("#jw-rep-end").value = "";
+        renderJobPnL();
+      });
+    }
   }
 
   function renderAll() {
@@ -1568,6 +2378,12 @@
     renderTodayList();
     renderReports();
     renderStock();
+    rebuildJobMaterialGrid();
+    populateJobCompanySelect();
+    renderJobCompanies();
+    updateJobLiveSummary();
+    renderJobTodayList();
+    renderJobPnL();
   }
 
   document.addEventListener("DOMContentLoaded", function () {
