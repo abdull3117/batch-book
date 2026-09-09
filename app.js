@@ -393,6 +393,17 @@
           Object.keys(DEFAULT_LABOUR).forEach((k) => {
             if (data[k] != null) merged[k] = data[k];
           });
+          // Self-heal a stale "Fallback processing cost per batch" that
+          // doesn't match the breakdown's own computed ₹/MT rate (e.g. data
+          // saved before this sync existed) — keep the two in step.
+          const perMT = processingCostPerMT(merged);
+          if (perMT != null) {
+            const rounded = Math.round(perMT * 100) / 100;
+            if (merged.processingCost !== rounded) {
+              merged.processingCost = rounded;
+              if (state.role === "admin") db.doc("settings/labour").set(merged).catch(() => {});
+            }
+          }
           state.labour = merged;
         }
         renderSettingsLabour();
@@ -1166,10 +1177,20 @@
       staffSalaries: parseFloat($("#s-staff-salaries").value) || 0,
       budgetedMonthlyOutputMT: parseFloat($("#s-budgeted-output-mt").value) || 0,
     });
+    // Keep the "Fallback processing cost per batch" field in sync with the
+    // breakdown's computed ₹/MT rate, so the two never show conflicting
+    // numbers (per-batch cost is always calculated in MT via this rate —
+    // see processingCostPerMT/computeCosts — the fallback is just the
+    // number that's also stored/shown so nothing looks out of date).
+    const perMT = processingCostPerMT(payload);
+    if (perMT != null) {
+      payload.processingCost = Math.round(perMT * 100) / 100;
+      if ($("#s-processing-cost")) $("#s-processing-cost").value = payload.processingCost;
+    }
     state.labour = payload;
     try {
       if (state.db) await state.db.doc("settings/labour").set(payload);
-      toast("Processing cost breakdown saved.", "success");
+      toast("Processing cost breakdown saved" + (perMT != null ? " — fallback field updated to " + fmtINR(payload.processingCost) + "/MT." : "."), "success");
       updateProcessingBreakdownReadout();
       updateLiveSummary();
     } catch (e) {
