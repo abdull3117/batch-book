@@ -7,11 +7,11 @@
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🏭</text></svg>" />
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;800&family=Public+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@600;700;800&family=Quicksand:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet">
 <!-- Cache-busting: GitHub Pages caches these for 10 minutes (Cache-Control: max-age=600).
      Bump the ?v= number on app.js, style.css and firebase-config.js below every time
      any of those files are redeployed, so users don't keep running a stale cached copy. -->
-<link rel="stylesheet" href="style.css?v=4" />
+<link rel="stylesheet" href="style.css?v=5" />
 </head>
 <body>
 
@@ -22,7 +22,7 @@
      everyday privacy between roles, not a hardened security boundary. -->
 <div id="lock-screen" class="lock-screen">
   <div class="lock-card">
-    <div class="brand-mark" style="margin:0 auto 14px;">BB</div>
+    <div class="brand-mark" style="margin:0 auto 14px;">🏭</div>
     <h2>Batch Book</h2>
     <p class="sub">EMR Groups &middot; enter your access password</p>
     <input type="password" id="lock-password" placeholder="Password" autocomplete="current-password" />
@@ -35,17 +35,17 @@
 <div id="app" hidden>
 <div class="topbar">
   <div class="brand">
-    <div class="brand-mark">BB</div>
+    <div class="brand-mark">🏭</div>
     <div class="brand-text">
       <h1>Batch Book</h1>
       <p class="sub">EMR Groups &middot; daily production log</p>
     </div>
   </div>
   <div class="tabs" role="tablist">
-    <button class="tab-btn active" data-tab="entry">Log Batch</button>
-    <button class="tab-btn" data-tab="reports" id="tab-btn-reports">Reports</button>
-    <button class="tab-btn" data-tab="stock">Stock</button>
-    <button class="tab-btn" data-tab="settings" id="tab-btn-settings">Settings</button>
+    <button class="tab-btn active" data-tab="entry">📝 Log Batch</button>
+    <button class="tab-btn" data-tab="reports" id="tab-btn-reports">📊 Reports</button>
+    <button class="tab-btn" data-tab="stock">📦 Stock</button>
+    <button class="tab-btn" data-tab="settings" id="tab-btn-settings">⚙️ Settings</button>
   </div>
   <div class="sync">
     <span class="sync-dot connecting" id="sync-dot"></span>
@@ -60,7 +60,7 @@
   <!-- ============ LOG BATCH ============ -->
   <section class="view active" id="view-entry">
     <div class="view-header">
-      <h2>Log today&rsquo;s batch</h2>
+      <h2>📝 Log today&rsquo;s batch</h2>
       <p>One row per batch. Save this one, then log the next &mdash; add as many batches and different products as you need for the same day.</p>
     </div>
 
@@ -172,7 +172,7 @@
   <!-- ============ REPORTS ============ -->
   <section class="view" id="view-reports">
     <div class="view-header">
-      <h2>Production reports</h2>
+      <h2>📊 Production reports</h2>
       <p>Review batches, cost, and output across any date range or a single product.</p>
     </div>
 
@@ -256,7 +256,7 @@
   <!-- ============ STOCK ============ -->
   <section class="view" id="view-stock">
     <div class="view-header">
-      <h2>Finished goods stock</h2>
+      <h2>📦 Finished goods stock</h2>
       <p>Opening stock plus what was produced, minus what was dispatched, gives the closing stock. All quantities on this page are in Metric Tonnes (MT).</p>
     </div>
 
@@ -302,7 +302,7 @@
   <!-- ============ SETTINGS ============ -->
   <section class="view" id="view-settings">
     <div class="view-header">
-      <h2>Settings</h2>
+      <h2>⚙️ Settings</h2>
       <p>Raw material rates, labour wages and the processing cost used to calculate every batch.</p>
     </div>
 
