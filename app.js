@@ -1832,8 +1832,23 @@
       stockBucketsFor(p.id).forEach((b) => buckets.push({ productId: p.id, date: b.date, companyId: b.companyId, companyName: b.companyName }));
     });
 
+    // Date filter dropdown — every distinct date that has a stock bucket
+    // for ANY company/product, newest first, independent of whichever
+    // company filter is selected, so switching companies never resets it.
+    const dateSel = $("#st-filter-date");
+    if (dateSel) {
+      const curDate = dateSel.value;
+      const dates = Array.from(new Set(buckets.map((b) => b.date))).sort().reverse();
+      dateSel.innerHTML = "";
+      dateSel.appendChild(el("option", { value: "" }, ["All dates"]));
+      dates.forEach((d) => dateSel.appendChild(el("option", { value: d }, [d])));
+      if (curDate && dates.indexOf(curDate) !== -1) dateSel.value = curDate;
+    }
+    const filterDate = dateSel ? dateSel.value : "";
+
     if (filterCompany === "__regular__") buckets = buckets.filter((b) => !b.companyId);
     else if (filterCompany) buckets = buckets.filter((b) => b.companyId === filterCompany);
+    if (filterDate) buckets = buckets.filter((b) => b.date === filterDate);
     buckets = buckets.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0)).slice(0, 200);
     if (!buckets.length) {
       body.appendChild(el("tr", {}, [el("td", { colspan: "7", class: "empty-hint" }, ["No stock entries yet."])]));
@@ -2165,6 +2180,7 @@
     $("#st-date").addEventListener("change", stockAutofillOpening);
     if ($("#st-company")) $("#st-company").addEventListener("change", stockAutofillOpening);
     if ($("#st-filter-company")) $("#st-filter-company").addEventListener("change", renderStock);
+    if ($("#st-filter-date")) $("#st-filter-date").addEventListener("change", renderStock);
     $("#btn-stock-save").addEventListener("click", submitStock);
 
     $("#btn-save-rates").addEventListener("click", saveMaterialRates);
