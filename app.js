@@ -1715,18 +1715,32 @@
   // either stock docs or tagged batch entries — used to build the ledger
   // and to find "the most recent prior date" per company.
   function stockBucketsFor(productId) {
-    const map = new Map(); // key `${date} ${companyKey}` -> {date, companyId, companyName}
+    const map = new Map(); // key `${date} ${companyKey}` -> {date, companyId, companyName}
     state.stock.filter((s) => s.productId === productId).forEach((s) => {
-      const key = s.date + " " + stockKey(s.companyId);
+      const key = s.date + " " + stockKey(s.companyId);
       if (!map.has(key)) map.set(key, { date: s.date, companyId: s.companyId || "", companyName: s.companyName || "" });
     });
     state.entries.filter((e) => e.productId === productId).forEach((e) => {
       const companyId = e.jobworkCompanyId || "";
-      const key = e.date + " " + stockKey(companyId);
+      const key = e.date + " " + stockKey(companyId);
       if (!map.has(key)) {
         const company = companyId ? jobCompanyById(companyId) : null;
         map.set(key, { date: e.date, companyId, companyName: e.jobworkCompanyName || (company ? company.name : "") });
       }
+    });
+    // Guarantee a "today" bucket for every company/regular bucket that has
+    // any prior history, so the ledger always shows an up-to-date current
+    // position even on a day nobody has logged a batch or stock entry for
+    // yet — opening/closing still sync forward via openingFor() below.
+    const today = todayStr();
+    const seenCompanies = new Map(); // companyKey -> {companyId, companyName}
+    Array.from(map.values()).forEach((b) => {
+      const key = stockKey(b.companyId);
+      if (!seenCompanies.has(key)) seenCompanies.set(key, { companyId: b.companyId, companyName: b.companyName });
+    });
+    seenCompanies.forEach((info, key) => {
+      const todayKey = today + " " + key;
+      if (!map.has(todayKey)) map.set(todayKey, { date: today, companyId: info.companyId, companyName: info.companyName });
     });
     return Array.from(map.values());
   }
@@ -1736,7 +1750,12 @@
   }
   function openingFor(date, productId, companyId) {
     const row = stockRowFor(date, productId, companyId);
-    return row ? Number(row.opening) || 0 : 0;
+    if (row) return Number(row.opening) || 0;
+    // No explicit Stock-tab entry for this exact day — carry the balance
+    // forward from the most recent prior day with activity, so every
+    // day's opening stays synced with the running total up to date
+    // instead of silently resetting to 0 whenever a day was skipped.
+    return suggestOpening(productId, date, companyId);
   }
   function closingFor(date, productId, companyId) {
     const opening = openingFor(date, productId, companyId);
