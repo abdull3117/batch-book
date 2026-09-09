@@ -60,6 +60,12 @@
   // Units offered everywhere a material or product's unit is picked.
   const UNIT_OPTIONS = ["Kg", "Litre", "Metric Tonne"];
 
+  // Per-batch output (and everything it feeds into — cost/Kg, material
+  // rates) stays stored and costed in Kg, unchanged. The Stock ledger and
+  // the Reports "Total output" tile instead work in Metric Tonnes, so we
+  // convert at the boundary: 1 MT = 1000 Kg.
+  const KG_PER_MT = 1000;
+
   // Google Sheets sync — Apps Script Web App URL. Every saved batch is
   // also pushed here as a row, so there's always a live spreadsheet
   // copy of all entries. Firestore (above) remains the source of truth
@@ -624,7 +630,7 @@
     const avgCpk = totalOutput > 0 ? totalCost / totalOutput : 0;
 
     $("#tile-batches").textContent = fmtNum(totalBatches, 0);
-    $("#tile-output").textContent = fmtNum(totalOutput, 0) + " Kg";
+    $("#tile-output").textContent = fmtNum(totalOutput / KG_PER_MT, 2) + " MT";
     $("#tile-cost").textContent = fmtINR(totalCost);
     $("#tile-cpk").textContent = totalOutput > 0 ? fmtINR(avgCpk) : "—";
 
@@ -798,10 +804,12 @@
       .filter((s) => s.productId === productId && s.date < date)
       .sort((a, b) => (a.date < b.date ? 1 : -1))[0];
     if (!prior) return 0;
-    const produced = producedFor(prior.date, productId);
-    return (Number(prior.opening) || 0) + produced - (Number(prior.dispatched) || 0);
+    const producedMT = producedFor(prior.date, productId) / KG_PER_MT;
+    return (Number(prior.opening) || 0) + producedMT - (Number(prior.dispatched) || 0);
   }
 
+  // Returns Kg — the batch entries this is summed from are stored in Kg.
+  // Callers on the Stock ledger (MT throughout) divide by KG_PER_MT.
   function producedFor(date, productId) {
     return state.entries
       .filter((e) => e.date === date && e.productId === productId)
@@ -850,15 +858,15 @@
       return;
     }
     rows.forEach((s) => {
-      const produced = producedFor(s.date, s.productId);
-      const closing = (Number(s.opening) || 0) + produced - (Number(s.dispatched) || 0);
+      const producedMT = producedFor(s.date, s.productId) / KG_PER_MT;
+      const closing = (Number(s.opening) || 0) + producedMT - (Number(s.dispatched) || 0);
       body.appendChild(el("tr", {}, [
         el("td", {}, [s.date]),
         el("td", {}, [productName(s.productId)]),
-        el("td", { class: "num" }, [fmtNum(s.opening, 0)]),
-        el("td", { class: "num" }, [fmtNum(produced, 0)]),
-        el("td", { class: "num" }, [fmtNum(s.dispatched, 0)]),
-        el("td", { class: "num strong" }, [fmtNum(closing, 0)]),
+        el("td", { class: "num" }, [fmtNum(s.opening, 2)]),
+        el("td", { class: "num" }, [fmtNum(producedMT, 2)]),
+        el("td", { class: "num" }, [fmtNum(s.dispatched, 2)]),
+        el("td", { class: "num strong" }, [fmtNum(closing, 2)]),
       ]));
     });
   }

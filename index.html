@@ -157,7 +157,7 @@
 
       <div class="tiles">
         <div class="tile"><div class="tk">Batches</div><div class="tv" id="tile-batches">0</div></div>
-        <div class="tile"><div class="tk">Total output</div><div class="tv" id="tile-output">0 Kg</div></div>
+        <div class="tile"><div class="tk">Total output</div><div class="tv" id="tile-output">0 MT</div></div>
         <div class="tile"><div class="tk">Total cost</div><div class="tv" id="tile-cost">&#8377;0</div></div>
         <div class="tile"><div class="tk">Avg cost / Kg</div><div class="tv" id="tile-cpk">&mdash;</div></div>
       </div>
@@ -218,7 +218,7 @@
   <section class="view" id="view-stock">
     <div class="view-header">
       <h2>Finished goods stock</h2>
-      <p>Opening stock plus what was produced, minus what was dispatched, gives the closing stock.</p>
+      <p>Opening stock plus what was produced, minus what was dispatched, gives the closing stock. All quantities on this page are in Metric Tonnes (MT).</p>
     </div>
 
     <div class="card">
@@ -233,11 +233,11 @@
           <select id="st-product"></select>
         </div>
         <div class="field">
-          <label for="st-opening">Opening stock (Kg)</label>
+          <label for="st-opening">Opening stock (MT)</label>
           <input type="number" min="0" step="any" id="st-opening" placeholder="0" />
         </div>
         <div class="field">
-          <label for="st-dispatched">Dispatched / sold (Kg)</label>
+          <label for="st-dispatched">Dispatched / sold (MT)</label>
           <input type="number" min="0" step="any" id="st-dispatched" placeholder="0" />
         </div>
       </div>
@@ -250,8 +250,8 @@
         <table>
           <thead>
             <tr>
-              <th>Date</th><th>Product</th><th class="num">Opening</th><th class="num">Produced</th>
-              <th class="num">Dispatched</th><th class="num">Closing</th>
+              <th>Date</th><th>Product</th><th class="num">Opening (MT)</th><th class="num">Produced (MT)</th>
+              <th class="num">Dispatched (MT)</th><th class="num">Closing (MT)</th>
             </tr>
           </thead>
           <tbody id="stock-body"></tbody>
