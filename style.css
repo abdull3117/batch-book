@@ -177,6 +177,7 @@ button, input, select, textarea { font-family: inherit; font-size: inherit; colo
   background: var(--accent-soft); color: var(--accent-ink); border-radius: var(--radius-sm);
   padding: 10px 12px; margin-bottom: 14px; font-size: .85rem; font-weight: 600;
 }
+.edit-banner[hidden] { display: none; }
 
 .mat-search-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
 .mat-search-row input {
@@ -286,6 +287,7 @@ td.strong { font-weight: 700; }
   display: flex; gap: 8px; flex-wrap: wrap; align-items: center;
   margin-top: 12px; padding: 10px; background: var(--surface-2); border-radius: var(--radius-sm);
 }
+.add-item-row[hidden], .inline-add-row[hidden] { display: none; }
 .inline-add-row { margin: 8px 0 0; }
 .add-item-row input, .inline-add-row input, .add-item-row select, .inline-add-row select {
   background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
