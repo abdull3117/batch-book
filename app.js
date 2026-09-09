@@ -55,7 +55,32 @@
     { id: "p_no16", name: "No.16", unit: "Kg" },
   ];
 
-  const DEFAULT_LABOUR = { operatorRate: 600, loadmanRate: 500, processingCost: 2000 };
+  const DEFAULT_LABOUR = {
+    operatorRate: 600, loadmanRate: 500,
+    processingCost: 2000, // flat ₹/batch fallback, used until the breakdown below is set up
+    // Processing cost breakdown — all ₹ per month. Their sum, divided by
+    // budgetedMonthlyOutputMT, gives a ₹/MT rate applied to each batch
+    // based on that batch's own output (see processingCostPerMT below).
+    ebCost: 0, fuelCost: 0, maintenanceCost: 0, electricalMaintenanceCost: 0,
+    stitchingExpense: 0, sackExpenses: 0, departmentExpenses: 0, staffSalaries: 0,
+    budgetedMonthlyOutputMT: 0,
+  };
+  const PROCESSING_BREAKDOWN_FIELDS = [
+    "ebCost", "fuelCost", "maintenanceCost", "electricalMaintenanceCost",
+    "stitchingExpense", "sackExpenses", "departmentExpenses", "staffSalaries",
+  ];
+
+  function monthlyProcessingCostTotal(labour) {
+    return PROCESSING_BREAKDOWN_FIELDS.reduce((sum, k) => sum + (Number(labour[k]) || 0), 0);
+  }
+
+  // Returns a ₹/MT rate once a budgeted monthly output is set, else null
+  // (caller falls back to the flat per-batch default).
+  function processingCostPerMT(labour) {
+    const budgetMT = Number(labour.budgetedMonthlyOutputMT) || 0;
+    if (budgetMT <= 0) return null;
+    return monthlyProcessingCostTotal(labour) / budgetMT;
+  }
 
   // Units offered everywhere a material or product's unit is picked.
   const UNIT_OPTIONS = ["Kg", "Litre", "Metric Tonne"];
@@ -149,7 +174,10 @@
       const q = Number(materialsQty[m.id]) || 0;
       rmCost += q * (Number(m.rate) || 0);
     });
-    const processingCost = Number(state.labour.processingCost) || 0;
+    const perMT = processingCostPerMT(state.labour);
+    const processingCost = perMT != null
+      ? perMT * (outputQty / KG_PER_MT)
+      : (Number(state.labour.processingCost) || 0);
     const labourCost = (Number(operators) || 0) * (Number(state.labour.operatorRate) || 0) +
       (Number(loadmen) || 0) * (Number(state.labour.loadmanRate) || 0);
     const totalCost = rmCost + processingCost + labourCost;
@@ -323,11 +351,11 @@
       (snap) => {
         if (snap.exists) {
           const data = snap.data();
-          state.labour = {
-            operatorRate: data.operatorRate != null ? data.operatorRate : DEFAULT_LABOUR.operatorRate,
-            loadmanRate: data.loadmanRate != null ? data.loadmanRate : DEFAULT_LABOUR.loadmanRate,
-            processingCost: data.processingCost != null ? data.processingCost : DEFAULT_LABOUR.processingCost,
-          };
+          const merged = Object.assign({}, DEFAULT_LABOUR);
+          Object.keys(DEFAULT_LABOUR).forEach((k) => {
+            if (data[k] != null) merged[k] = data[k];
+          });
+          state.labour = merged;
         }
         renderSettingsLabour();
         updateLiveSummary();
@@ -908,6 +936,38 @@
     if ($("#s-operator-rate")) $("#s-operator-rate").value = state.labour.operatorRate;
     if ($("#s-loadman-rate")) $("#s-loadman-rate").value = state.labour.loadmanRate;
     if ($("#s-processing-cost")) $("#s-processing-cost").value = state.labour.processingCost;
+    const fieldIds = {
+      ebCost: "s-eb-cost", fuelCost: "s-fuel-cost", maintenanceCost: "s-maintenance-cost",
+      electricalMaintenanceCost: "s-electrical-maintenance-cost", stitchingExpense: "s-stitching-expense",
+      sackExpenses: "s-sack-expenses", departmentExpenses: "s-department-expenses", staffSalaries: "s-staff-salaries",
+    };
+    Object.keys(fieldIds).forEach((k) => {
+      const inp = $("#" + fieldIds[k]);
+      if (inp) inp.value = state.labour[k] || "";
+    });
+    if ($("#s-budgeted-output-mt")) $("#s-budgeted-output-mt").value = state.labour.budgetedMonthlyOutputMT || "";
+    updateProcessingBreakdownReadout();
+  }
+
+  // Reads the breakdown fields live (before saving) and updates the
+  // "Monthly total" / "Rate applied per batch" readout under them.
+  function updateProcessingBreakdownReadout() {
+    const totalEl = $("#proc-monthly-total");
+    const rateEl = $("#proc-per-mt-rate");
+    if (!totalEl || !rateEl) return;
+    const draft = {
+      ebCost: $("#s-eb-cost").value, fuelCost: $("#s-fuel-cost").value,
+      maintenanceCost: $("#s-maintenance-cost").value, electricalMaintenanceCost: $("#s-electrical-maintenance-cost").value,
+      stitchingExpense: $("#s-stitching-expense").value, sackExpenses: $("#s-sack-expenses").value,
+      departmentExpenses: $("#s-department-expenses").value, staffSalaries: $("#s-staff-salaries").value,
+      budgetedMonthlyOutputMT: $("#s-budgeted-output-mt").value,
+    };
+    const total = monthlyProcessingCostTotal(draft);
+    totalEl.textContent = fmtINR(total);
+    const perMT = processingCostPerMT(draft);
+    rateEl.textContent = perMT != null
+      ? fmtINR(perMT) + " / MT"
+      : "Not set up — using fallback";
   }
 
   async function saveMaterialRates() {
@@ -930,11 +990,11 @@
   }
 
   async function saveLabourSettings() {
-    const payload = {
+    const payload = Object.assign({}, state.labour, {
       operatorRate: parseFloat($("#s-operator-rate").value) || 0,
       loadmanRate: parseFloat($("#s-loadman-rate").value) || 0,
       processingCost: parseFloat($("#s-processing-cost").value) || 0,
-    };
+    });
     state.labour = payload;
     try {
       if (state.db) await state.db.doc("settings/labour").set(payload);
@@ -942,6 +1002,29 @@
       updateLiveSummary();
     } catch (e) {
       toast("Could not save settings: " + e.message, "error");
+    }
+  }
+
+  async function saveProcessingBreakdown() {
+    const payload = Object.assign({}, state.labour, {
+      ebCost: parseFloat($("#s-eb-cost").value) || 0,
+      fuelCost: parseFloat($("#s-fuel-cost").value) || 0,
+      maintenanceCost: parseFloat($("#s-maintenance-cost").value) || 0,
+      electricalMaintenanceCost: parseFloat($("#s-electrical-maintenance-cost").value) || 0,
+      stitchingExpense: parseFloat($("#s-stitching-expense").value) || 0,
+      sackExpenses: parseFloat($("#s-sack-expenses").value) || 0,
+      departmentExpenses: parseFloat($("#s-department-expenses").value) || 0,
+      staffSalaries: parseFloat($("#s-staff-salaries").value) || 0,
+      budgetedMonthlyOutputMT: parseFloat($("#s-budgeted-output-mt").value) || 0,
+    });
+    state.labour = payload;
+    try {
+      if (state.db) await state.db.doc("settings/labour").set(payload);
+      toast("Processing cost breakdown saved.", "success");
+      updateProcessingBreakdownReadout();
+      updateLiveSummary();
+    } catch (e) {
+      toast("Could not save breakdown: " + e.message, "error");
     }
   }
 
@@ -1071,6 +1154,14 @@
 
     $("#btn-save-rates").addEventListener("click", saveMaterialRates);
     $("#btn-save-labour").addEventListener("click", saveLabourSettings);
+
+    // Processing cost breakdown — live readout as the user types, before saving.
+    $("#btn-save-processing-breakdown").addEventListener("click", saveProcessingBreakdown);
+    [
+      "#s-eb-cost", "#s-fuel-cost", "#s-maintenance-cost", "#s-electrical-maintenance-cost",
+      "#s-stitching-expense", "#s-sack-expenses", "#s-department-expenses", "#s-staff-salaries",
+      "#s-budgeted-output-mt",
+    ].forEach((sel) => $(sel).addEventListener("input", updateProcessingBreakdownReadout));
   }
 
   function renderAll() {

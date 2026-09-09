@@ -307,11 +307,58 @@
               <input type="number" min="0" step="any" id="s-loadman-rate" />
             </div>
             <div class="field">
-              <label for="s-processing-cost">Default processing cost per batch (&#8377;)</label>
+              <label for="s-processing-cost">Fallback processing cost per batch (&#8377;)</label>
               <input type="number" min="0" step="any" id="s-processing-cost" />
             </div>
           </div>
+          <p class="hint" style="margin-top:4px;">Used only when the monthly breakdown below isn&rsquo;t set up (no budgeted monthly output entered).</p>
           <button class="btn btn-primary" id="btn-save-labour">Save settings</button>
+        </div>
+
+        <div class="card" style="margin-top:16px;">
+          <div class="card-title">Processing cost breakdown (&#8377; per month)</div>
+          <p class="hint">Enter each monthly expense once. Divided by your budgeted monthly output, this gives a &#8377;/MT processing-cost rate that&rsquo;s applied to every batch based on its own output &mdash; so it replaces the flat fallback above once set up.</p>
+          <div class="field-row" style="grid-template-columns:1fr 1fr;">
+            <div class="field">
+              <label for="s-eb-cost">EB (electricity) cost</label>
+              <input type="number" min="0" step="any" id="s-eb-cost" />
+            </div>
+            <div class="field">
+              <label for="s-fuel-cost">Fuel cost</label>
+              <input type="number" min="0" step="any" id="s-fuel-cost" />
+            </div>
+            <div class="field">
+              <label for="s-maintenance-cost">Maintenance cost</label>
+              <input type="number" min="0" step="any" id="s-maintenance-cost" />
+            </div>
+            <div class="field">
+              <label for="s-electrical-maintenance-cost">Electrical maintenance cost</label>
+              <input type="number" min="0" step="any" id="s-electrical-maintenance-cost" />
+            </div>
+            <div class="field">
+              <label for="s-stitching-expense">Stitching expense</label>
+              <input type="number" min="0" step="any" id="s-stitching-expense" />
+            </div>
+            <div class="field">
+              <label for="s-sack-expenses">Sack expenses</label>
+              <input type="number" min="0" step="any" id="s-sack-expenses" />
+            </div>
+            <div class="field">
+              <label for="s-department-expenses">Department expenses</label>
+              <input type="number" min="0" step="any" id="s-department-expenses" />
+            </div>
+            <div class="field">
+              <label for="s-staff-salaries">Staff expenses (total salaries)</label>
+              <input type="number" min="0" step="any" id="s-staff-salaries" />
+            </div>
+          </div>
+          <div class="field" style="max-width:280px; margin-top:4px;">
+            <label for="s-budgeted-output-mt">Budgeted monthly output (MT)</label>
+            <input type="number" min="0" step="any" id="s-budgeted-output-mt" placeholder="e.g. 300" />
+          </div>
+          <div class="summary-row" style="margin-top:12px;"><span class="k">Monthly total</span><span class="v" id="proc-monthly-total">&#8377;0</span></div>
+          <div class="summary-row"><span class="k">Rate applied per batch</span><span class="v" id="proc-per-mt-rate">Not set up &mdash; using fallback</span></div>
+          <button class="btn btn-primary" id="btn-save-processing-breakdown" style="margin-top:8px;">Save breakdown</button>
         </div>
 
         <div class="card" style="margin-top:16px;">
