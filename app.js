@@ -576,7 +576,10 @@
   }
 
   function updateLiveSummary() {
-    const outputQty = parseFloat($("#f-output").value) || 0;
+    // The form collects output in MT (matching Stock/Reports elsewhere);
+    // convert to Kg here since costing (rmCost, costPerKg) stays Kg-based.
+    const outputMT = parseFloat($("#f-output").value) || 0;
+    const outputQty = outputMT * KG_PER_MT;
     const operators = parseFloat($("#f-operators").value) || 0;
     const loadmen = parseFloat($("#f-loadmen").value) || 0;
     const mats = getFormMaterialsQty();
@@ -593,7 +596,9 @@
   async function submitEntry() {
     const date = $("#f-date").value;
     const productId = $("#f-product").value;
-    const outputQty = parseFloat($("#f-output").value) || 0;
+    // Entered in MT on the form; stored (and costed) in Kg as before.
+    const outputMT = parseFloat($("#f-output").value) || 0;
+    const outputQty = outputMT * KG_PER_MT;
     const operators = parseFloat($("#f-operators").value) || 0;
     const loadmen = parseFloat($("#f-loadmen").value) || 0;
     const remarks = $("#f-remarks").value.trim();
@@ -602,7 +607,7 @@
     if (!date) return toast("Pick a date first.", "error");
     if (!productId) return toast("Pick a product first.", "error");
     if (productId === "__other__") return toast("Finish adding the new product first.", "error");
-    if (outputQty <= 0) return toast("Enter the output quantity produced.", "error");
+    if (outputMT <= 0) return toast("Enter the output quantity produced.", "error");
     if (Object.keys(mats).length === 0) return toast("Enter at least one raw material quantity.", "error");
 
     const c = computeCosts(mats, outputQty, operators, loadmen);
@@ -620,7 +625,7 @@
       if (state.db) {
         const ref = await state.db.collection("entries").add(payload);
         syncEntryToSheet(ref.id, payload);
-        toast("Batch saved — " + productName(productId) + ", " + fmtNum(outputQty, 0) + " Kg. Ready for the next batch.", "success");
+        toast("Batch saved — " + productName(productId) + ", " + fmtNum(outputMT, 2) + " MT. Ready for the next batch.", "success");
       } else {
         payload.id = "local_" + Date.now();
         state.entries.unshift(payload);
@@ -665,9 +670,10 @@
       return;
     }
     rows.forEach((r) => {
+      const outputMTVal = (r.outputQty || 0) / KG_PER_MT;
       const metaText = state.role === "team"
-        ? fmtNum(r.outputQty, 0) + " Kg"
-        : fmtNum(r.outputQty, 0) + " Kg · " + fmtINR(r.totalCost) + " · " + fmtINR(r.costPerKg) + "/Kg";
+        ? fmtNum(outputMTVal, 2) + " MT"
+        : fmtNum(outputMTVal, 2) + " MT · " + fmtINR(r.totalCost) + " · " + fmtINR(r.costPerKg) + "/Kg";
       const row = el("div", { class: "today-row" }, [
         el("div", { class: "today-main" }, [
           el("span", { class: "today-product" }, [productName(r.productId)]),
@@ -702,7 +708,8 @@
   function fillFormFromEntry(entry) {
     if (!entry) return;
     $("#f-product").value = entry.productId || "";
-    $("#f-output").value = entry.outputQty || "";
+    // entry.outputQty is stored in Kg; the form collects MT.
+    $("#f-output").value = entry.outputQty ? entry.outputQty / KG_PER_MT : "";
     $("#f-operators").value = entry.operators || "";
     $("#f-loadmen").value = entry.loadmen || "";
     $("#f-remarks").value = "";
@@ -798,7 +805,7 @@
     });
     const agg = Object.values(byProduct).sort((a, b) => b.cost - a.cost);
 
-    renderBarChart($("#chart-output"), agg.map((a) => ({ label: productName(a.productId), value: a.output })), { suffix: " Kg", decimals: 0 });
+    renderBarChart($("#chart-output"), agg.map((a) => ({ label: productName(a.productId), value: a.output / KG_PER_MT })), { suffix: " MT", decimals: 2 });
     renderBarChart($("#chart-cost"), agg.map((a) => ({ label: productName(a.productId), value: a.cost })), { prefix: "₹", decimals: 0 });
 
     const prodTable = $("#product-report-body");
@@ -810,7 +817,7 @@
         prodTable.appendChild(el("tr", {}, [
           el("td", {}, [productName(a.productId)]),
           el("td", { class: "num" }, [fmtNum(a.batches, 0)]),
-          el("td", { class: "num" }, [fmtNum(a.output, 0)]),
+          el("td", { class: "num" }, [fmtNum(a.output / KG_PER_MT, 2)]),
           el("td", { class: "num" }, [fmtINR(a.cost)]),
           el("td", { class: "num" }, [fmtINR(a.output > 0 ? a.cost / a.output : 0)]),
         ]));
@@ -826,7 +833,7 @@
         logBody.appendChild(el("tr", {}, [
           el("td", {}, [r.date]),
           el("td", {}, [productName(r.productId)]),
-          el("td", { class: "num" }, [fmtNum(r.outputQty, 0)]),
+          el("td", { class: "num" }, [fmtNum((r.outputQty || 0) / KG_PER_MT, 2)]),
           el("td", { class: "num" }, [fmtINR(r.rmCost)]),
           el("td", { class: "num" }, [fmtINR(r.processingCost)]),
           el("td", { class: "num" }, [fmtINR(r.labourCost)]),
@@ -871,7 +878,7 @@
     return rows.map((r) => ({
       "Date": r.date,
       "Product": productName(r.productId),
-      "Output (Kg)": r.outputQty || 0,
+      "Output (MT)": Number(((r.outputQty || 0) / KG_PER_MT).toFixed(2)),
       "RM Cost": r.rmCost || 0,
       "Processing Cost": r.processingCost || 0,
       "Labour Cost": r.labourCost || 0,
