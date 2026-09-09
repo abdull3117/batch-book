@@ -8,7 +8,10 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;800&family=Public+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css" />
+<!-- Cache-busting: GitHub Pages caches these for 10 minutes (Cache-Control: max-age=600).
+     Bump the ?v= number on app.js, style.css and firebase-config.js below every time
+     any of those files are redeployed, so users don't keep running a stale cached copy. -->
+<link rel="stylesheet" href="style.css?v=1" />
 </head>
 <body>
 <div id="app">
@@ -394,11 +397,11 @@
 <!-- Firebase (compat SDK) — shared live database, no Claude account needed -->
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore-compat.js"></script>
-<script src="firebase-config.js"></script>
+<script src="firebase-config.js?v=1"></script>
 <!-- Export libraries: Excel (SheetJS) and PDF (jsPDF + autotable) for the Reports download buttons -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
-<script src="app.js"></script>
+<script src="app.js?v=1"></script>
 </body>
 </html>
