@@ -150,6 +150,7 @@
     activeTab: "entry",
     materialFilter: "",
     reportFilter: { start: "", end: "", productId: "" },
+    editingEntryId: null, // set while the form is editing an existing batch instead of logging a new one
   };
 
   // ---------------------------------------------------------------
@@ -636,29 +637,49 @@
     if (Object.keys(mats).length === 0) return toast("Enter at least one raw material quantity.", "error");
 
     const c = computeCosts(mats, outputQty, operators, loadmen);
+    const editingId = state.editingEntryId;
+    const existing = editingId ? state.entries.find((e) => e.id === editingId) : null;
     const payload = {
       date, productId, outputQty, materials: mats, operators, loadmen, remarks,
       rmCost: c.rmCost, processingCost: c.processingCost, labourCost: c.labourCost,
       totalCost: c.totalCost, costPerKg: c.costPerKg,
-      createdAt: new Date().toISOString(),
+      // Keep the original createdAt on an edit so the entry doesn't jump
+      // position in the "most recent" ordering used elsewhere; stamp a
+      // separate updatedAt instead.
+      createdAt: (existing && existing.createdAt) || new Date().toISOString(),
     };
+    if (editingId) payload.updatedAt = new Date().toISOString();
 
     const btn = $("#btn-submit");
     btn.disabled = true;
-    btn.textContent = "Saving…";
+    btn.textContent = editingId ? "Updating…" : "Saving…";
     try {
+      const unitLabel = outputUnit === "Metric Tonne" ? "MT" : outputUnit;
       if (state.db) {
-        const ref = await state.db.collection("entries").add(payload);
-        syncEntryToSheet(ref.id, payload);
-        const unitLabel = outputUnit === "Metric Tonne" ? "MT" : outputUnit;
-        toast("Batch saved — " + productName(productId) + ", " + fmtNum(outputVal, 2) + " " + unitLabel + ". Ready for the next batch.", "success");
+        if (editingId) {
+          await state.db.collection("entries").doc(editingId).set(payload);
+          syncEntryToSheet(editingId, payload);
+          toast("Batch updated — " + productName(productId) + ", " + fmtNum(outputVal, 2) + " " + unitLabel + ".", "success");
+        } else {
+          const ref = await state.db.collection("entries").add(payload);
+          syncEntryToSheet(ref.id, payload);
+          toast("Batch saved — " + productName(productId) + ", " + fmtNum(outputVal, 2) + " " + unitLabel + ". Ready for the next batch.", "success");
+        }
       } else {
-        payload.id = "local_" + Date.now();
-        state.entries.unshift(payload);
+        if (editingId) {
+          const idx = state.entries.findIndex((e) => e.id === editingId);
+          if (idx !== -1) state.entries[idx] = Object.assign({ id: editingId }, payload);
+          toast("Batch updated locally (preview only — open the published link to sync).", "warn");
+        } else {
+          payload.id = "local_" + Date.now();
+          state.entries.unshift(payload);
+          toast("Saved locally (preview only — open the published link to sync).", "warn");
+        }
         renderTodayList();
         renderReports();
-        toast("Saved locally (preview only — open the published link to sync).", "warn");
       }
+      state.editingEntryId = null;
+      if ($("#edit-banner")) $("#edit-banner").hidden = true;
       resetEntryForm(date);
       // Jump straight back to the top of the form, ready for the next
       // batch — logging several batches (same or different products) in
@@ -669,7 +690,7 @@
       toast("Could not save: " + (e && e.message ? e.message : "unknown error"), "error");
     } finally {
       btn.disabled = false;
-      btn.textContent = "Save batch";
+      btn.textContent = state.editingEntryId ? "Update batch" : "Save batch";
     }
   }
 
@@ -707,6 +728,14 @@
         ]),
         el("div", { class: "today-actions" }, [
           el("button", {
+            class: "icon-btn", title: "View this batch's full details",
+            onclick: () => viewEntry(r),
+          }, ["\u{1F441}"]),
+          el("button", {
+            class: "icon-btn", title: "Edit this batch",
+            onclick: () => editEntry(r),
+          }, ["✎"]),
+          el("button", {
             class: "icon-btn", title: "Load this batch onto the form to log a similar one",
             onclick: () => duplicateEntry(r),
           }, ["⧉"]),
@@ -716,6 +745,7 @@
           }, ["✕"]),
         ]),
       ]);
+      if (state.editingEntryId === r.id) row.classList.add("today-row-editing");
       host.appendChild(row);
     });
   }
@@ -731,8 +761,9 @@
     return rows.slice().sort((a, b) => (a.createdAt || "") < (b.createdAt || "") ? 1 : -1)[0];
   }
 
-  function fillFormFromEntry(entry) {
+  function fillFormFromEntry(entry, opts) {
     if (!entry) return;
+    opts = opts || {};
     $("#f-product").value = entry.productId || "";
     // entry.outputQty is stored in Kg; refill the form in MT (and reset
     // the unit picker to MT so the displayed number matches the label).
@@ -740,7 +771,7 @@
     if ($("#f-output-unit")) $("#f-output-unit").value = "Metric Tonne";
     $("#f-operators").value = entry.operators || "";
     $("#f-loadmen").value = entry.loadmen || "";
-    $("#f-remarks").value = "";
+    $("#f-remarks").value = opts.keepRemarks ? (entry.remarks || "") : "";
     const mats = entry.materials || {};
     $all(".mat-input").forEach((inp) => {
       const v = mats[inp.dataset.mat];
@@ -749,7 +780,14 @@
     updateLiveSummary();
   }
 
+  function exitEditMode() {
+    state.editingEntryId = null;
+    if ($("#edit-banner")) $("#edit-banner").hidden = true;
+    if ($("#btn-submit")) $("#btn-submit").textContent = "Save batch";
+  }
+
   function repeatLastBatch() {
+    exitEditMode();
     const date = $("#f-date").value || todayStr();
     const last = mostRecentEntryForDate(date);
     if (!last) return toast("No batches logged for this date yet to repeat.", "warn");
@@ -760,10 +798,107 @@
   }
 
   function duplicateEntry(entry) {
+    exitEditMode();
     fillFormFromEntry(entry);
     toast("Loaded " + productName(entry.productId) + " onto the form — adjust and save as a new batch.", "success");
     $("#entry-form").scrollIntoView({ behavior: "smooth", block: "start" });
     $("#f-output").focus();
+  }
+
+  // ---------------------------------------------------------------
+  // Edit a previously logged batch in place (rather than duplicating
+  // it as a new entry). Saving while in this mode updates the same
+  // Firestore doc instead of creating a new one — see submitEntry().
+  // ---------------------------------------------------------------
+  function editEntry(entry) {
+    if (!entry) return;
+    state.editingEntryId = entry.id;
+    fillFormFromEntry(entry, { keepRemarks: true });
+    $("#f-date").value = entry.date || todayStr();
+    if ($("#edit-banner")) $("#edit-banner").hidden = false;
+    if ($("#edit-banner-text")) {
+      $("#edit-banner-text").textContent = "Editing " + productName(entry.productId) + " — " + entry.date + ". Change what you need and save to update it.";
+    }
+    if ($("#btn-submit")) $("#btn-submit").textContent = "Update batch";
+    renderTodayList();
+    toast("Editing this batch — change the fields and save, or cancel to leave it as-is.", "success");
+    $("#entry-form").scrollIntoView({ behavior: "smooth", block: "start" });
+    $("#f-output").focus();
+  }
+
+  function cancelEdit() {
+    if (!state.editingEntryId) return;
+    exitEditMode();
+    resetEntryForm($("#f-date").value || todayStr());
+    renderTodayList();
+    toast("Edit cancelled — nothing was changed.", "warn");
+  }
+
+  // ---------------------------------------------------------------
+  // Read-only "view" modal for a previously logged batch — full
+  // breakdown (materials, labour, cost) without loading it onto the
+  // form. Costs/rates are omitted for the team role, same as elsewhere.
+  // ---------------------------------------------------------------
+  let viewedEntry = null;
+
+  function viewEntry(entry) {
+    if (!entry) return;
+    viewedEntry = entry;
+    $("#view-modal-title").textContent = productName(entry.productId) + " — " + entry.date;
+    const body = $("#view-modal-body");
+    body.innerHTML = "";
+    const rows = [
+      ["Date", entry.date || "—"],
+      ["Product", productName(entry.productId)],
+      ["Output", fmtNum((entry.outputQty || 0) / KG_PER_MT, 2) + " MT"],
+      ["Operators", fmtNum(entry.operators || 0, 0)],
+      ["Loadmen", fmtNum(entry.loadmen || 0, 0)],
+    ];
+    rows.forEach(([k, v]) => {
+      body.appendChild(el("div", { class: "view-row" }, [
+        el("span", { class: "k" }, [k]), el("span", { class: "v" }, [String(v)]),
+      ]));
+    });
+
+    const mats = entry.materials || {};
+    const matIds = Object.keys(mats);
+    if (matIds.length) {
+      body.appendChild(el("div", { class: "view-section-title" }, ["Raw materials used"]));
+      matIds.forEach((id) => {
+        const m = materialById(id);
+        body.appendChild(el("div", { class: "view-row" }, [
+          el("span", { class: "k" }, [m ? m.name : id]),
+          el("span", { class: "v" }, [fmtNum(mats[id], 2) + " " + (m ? m.unit : "")]),
+        ]));
+      });
+    }
+
+    if (entry.remarks) {
+      body.appendChild(el("div", { class: "view-section-title" }, ["Remarks"]));
+      body.appendChild(el("div", { class: "view-row" }, [el("span", { class: "k" }, [entry.remarks])]));
+    }
+
+    if (state.role !== "team") {
+      body.appendChild(el("div", { class: "view-section-title" }, ["Cost"]));
+      [
+        ["Raw material cost", fmtINR(entry.rmCost)],
+        ["Processing cost", fmtINR(entry.processingCost)],
+        ["Labour cost", fmtINR(entry.labourCost)],
+        ["Total cost", fmtINR(entry.totalCost)],
+        ["Cost per Kg", fmtINR(entry.costPerKg)],
+      ].forEach(([k, v]) => {
+        body.appendChild(el("div", { class: "view-row" }, [
+          el("span", { class: "k" }, [k]), el("span", { class: "v" }, [v]),
+        ]));
+      });
+    }
+
+    $("#view-modal").hidden = false;
+  }
+
+  function closeViewModal() {
+    viewedEntry = null;
+    $("#view-modal").hidden = true;
   }
 
   async function deleteEntry(id) {
@@ -776,6 +911,10 @@
         state.entries = state.entries.filter((e) => e.id !== id);
         renderTodayList();
         renderReports();
+      }
+      if (state.editingEntryId === id) {
+        exitEditMode();
+        resetEntryForm($("#f-date").value || todayStr());
       }
       toast("Batch deleted.", "warn");
     } catch (e) {
@@ -1232,6 +1371,18 @@
     $("#entry-form").addEventListener("input", updateLiveSummary);
     $("#btn-submit").addEventListener("click", submitEntry);
     $("#btn-repeat-last").addEventListener("click", repeatLastBatch);
+    if ($("#btn-cancel-edit")) $("#btn-cancel-edit").addEventListener("click", cancelEdit);
+    if ($("#btn-view-close")) $("#btn-view-close").addEventListener("click", closeViewModal);
+    if ($("#btn-close-view")) $("#btn-close-view").addEventListener("click", closeViewModal);
+    if ($("#view-modal")) $("#view-modal").addEventListener("click", (e) => { if (e.target.id === "view-modal") closeViewModal(); });
+    if ($("#btn-view-edit")) {
+      $("#btn-view-edit").addEventListener("click", () => {
+        if (!viewedEntry) return;
+        const entry = viewedEntry;
+        closeViewModal();
+        editEntry(entry);
+      });
+    }
     $("#mat-search").addEventListener("input", (e) => {
       state.materialFilter = e.target.value;
       rebuildMaterialGrid();

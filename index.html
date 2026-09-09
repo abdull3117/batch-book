@@ -66,6 +66,10 @@
 
     <div class="entry-layout">
       <div class="card" id="entry-form">
+        <div class="edit-banner" id="edit-banner" hidden>
+          <span id="edit-banner-text">Editing a previously logged batch</span>
+          <button type="button" class="btn btn-secondary btn-small" id="btn-cancel-edit">Cancel edit</button>
+        </div>
         <div class="quickfill-row" id="quickfill-row">
           <button type="button" class="btn btn-secondary btn-small" id="btn-repeat-last">&#8635; Repeat last batch</button>
           <span class="hint">Fills product, materials &amp; labour from your last batch today &mdash; handy for back-to-back batches.</span>
@@ -436,6 +440,20 @@
 
 </div>
 
+<div class="modal-overlay" id="view-modal" hidden>
+  <div class="modal-card">
+    <div class="modal-head">
+      <div class="card-title" id="view-modal-title">Batch details</div>
+      <button type="button" class="icon-btn" id="btn-close-view" title="Close">&#10005;</button>
+    </div>
+    <div id="view-modal-body"></div>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-secondary btn-small" id="btn-view-close">Close</button>
+      <button type="button" class="btn btn-primary btn-small" id="btn-view-edit">Edit this batch</button>
+    </div>
+  </div>
+</div>
+
 <div id="toast-host"></div>
 </div>
 
@@ -447,6 +465,6 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
-<script src="app.js?v=6"></script>
+<script src="app.js?v=7"></script>
 </body>
 </html>
