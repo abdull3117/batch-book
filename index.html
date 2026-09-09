@@ -11,7 +11,7 @@
 <!-- Cache-busting: GitHub Pages caches these for 10 minutes (Cache-Control: max-age=600).
      Bump the ?v= number on app.js, style.css and firebase-config.js below every time
      any of those files are redeployed, so users don't keep running a stale cached copy. -->
-<link rel="stylesheet" href="style.css?v=8" />
+<link rel="stylesheet" href="style.css?v=9" />
 </head>
 <body>
 
@@ -107,6 +107,14 @@
           </div>
         </div>
 
+        <div class="field-row" id="f-jobwork-row" style="margin-top:-6px;">
+          <div class="field wide">
+            <label for="f-jobwork-company">Job work for (optional)</label>
+            <select id="f-jobwork-company"></select>
+            <div class="rate-readout" id="f-jobwork-rate-display" hidden>Rate: &#8212;</div>
+          </div>
+        </div>
+
         <div class="card-title" style="margin-top:6px;">Raw material used today</div>
         <div class="mat-search-row">
           <input type="text" id="mat-search" placeholder="Search a raw material&hellip;" />
@@ -154,6 +162,12 @@
               <div class="v" id="sum-cpk">&mdash;</div>
               <div class="k">Cost per Kg</div>
             </div>
+            <div class="summary-row" id="f-jw-revenue-row" hidden style="margin-top:8px;"><span class="k">Job work revenue</span><span class="v" id="sum-jw-revenue">&#8377;0.00</span></div>
+            <div class="summary-cpk" id="f-jw-profit-box" hidden>
+              <div class="v" id="sum-jw-profit">&#8377;0.00</div>
+              <div class="k">Profit / loss</div>
+            </div>
+            <p class="hint" id="f-jw-no-rate-hint" hidden style="margin-top:8px;"></p>
           </div>
           <div id="sum-mat-count">0 materials used</div>
           <button class="btn btn-primary" id="btn-submit">Save batch</button>
@@ -190,6 +204,10 @@
         <div class="field">
           <label for="rep-product">Product</label>
           <select id="rep-product"></select>
+        </div>
+        <div class="field">
+          <label for="rep-company">Company</label>
+          <select id="rep-company"></select>
         </div>
         <button class="btn btn-secondary btn-small" id="rep-preset-month">This month</button>
         <button class="btn btn-secondary btn-small" id="rep-preset-all">All time</button>
@@ -244,8 +262,9 @@
         <table>
           <thead>
             <tr>
-              <th>Date</th><th>Product</th><th class="num">Output (MT)</th><th class="num">RM cost</th>
-              <th class="num">Processing</th><th class="num">Labour</th><th class="num">Total cost</th><th class="num">Cost/Kg</th><th></th>
+              <th>Date</th><th>Product</th><th>Job work company</th><th class="num">Output (MT)</th><th class="num">RM cost</th>
+              <th class="num">Processing</th><th class="num">Labour</th><th class="num">Total cost</th>
+              <th class="num">Revenue</th><th class="num">Profit/Loss</th><th class="num">Cost/Kg</th><th></th>
             </tr>
           </thead>
           <tbody id="batch-log-body"></tbody>
@@ -304,7 +323,7 @@
   <section class="view" id="view-jobwork">
     <div class="view-header">
       <h2>🤝 Job work companies</h2>
-      <p>Track contract production for outside companies &mdash; log the batch, and see the profit or loss against each company&rsquo;s fixed job-work rate.</p>
+      <p>Set up contract companies &amp; their fixed job-work rates here, then log the actual batch from the <strong>Log Batch</strong> tab &mdash; just pick &ldquo;Job work for&rdquo; there. Profit or loss below updates automatically from that batch&rsquo;s own logged cost.</p>
     </div>
 
     <div class="card">
@@ -318,7 +337,7 @@
         </table>
       </div>
       <div id="jw-admin-tools">
-        <p class="hint" style="margin:2px 0 10px;">Link a product to a Log Batch product so its raw materials &amp; output can be pulled straight from a batch already logged there &mdash; see &ldquo;Pull raw materials from a Log Batch entry&rdquo; below.</p>
+        <p class="hint" style="margin:2px 0 10px;">Link each product to a Log Batch product (add it under Settings first if it doesn&rsquo;t exist yet) &mdash; that&rsquo;s what lets the Log Batch tab recognise it and calculate profit/loss automatically.</p>
         <div class="btn-row">
           <button class="btn btn-secondary btn-small" id="jw-btn-save-rates">Save rate &amp; link changes</button>
         </div>
@@ -329,9 +348,8 @@
         </div>
         <div class="add-item-row" id="jw-add-product-row" hidden>
           <select id="jw-new-product-company" style="min-width:160px;"></select>
-          <input type="text" id="jw-new-product-name" placeholder="Product name" />
-          <input type="number" id="jw-new-product-rate" placeholder="Rate &#8377;/MT" min="0" step="any" style="max-width:120px;" />
           <select id="jw-new-product-link" style="min-width:200px;"></select>
+          <input type="number" id="jw-new-product-rate" placeholder="Rate &#8377;/MT" min="0" step="any" style="max-width:120px;" />
           <input type="text" id="jw-new-product-note" placeholder="Notes (optional, e.g. mix ratio)" style="min-width:180px;" />
           <button class="btn btn-primary btn-small" id="jw-btn-confirm-add-product">Add product</button>
           <button class="btn btn-secondary btn-small" id="jw-btn-cancel-add-product">Cancel</button>
@@ -339,95 +357,6 @@
         <div class="btn-row">
           <button class="btn btn-secondary btn-small" id="jw-btn-show-add-company">+ Add company</button>
           <button class="btn btn-secondary btn-small" id="jw-btn-show-add-product">+ Add product</button>
-        </div>
-      </div>
-    </div>
-
-    <div class="entry-layout">
-      <div class="card" id="jobwork-entry-form">
-        <div class="edit-banner" id="jw-edit-banner" hidden>
-          <span id="jw-edit-banner-text">Editing a previously logged job work batch</span>
-          <button type="button" class="btn btn-secondary btn-small" id="jw-btn-cancel-edit">Cancel edit</button>
-        </div>
-        <div class="field-row">
-          <div class="field">
-            <label for="jw-date">Date</label>
-            <input type="date" id="jw-date" />
-          </div>
-          <div class="field">
-            <label for="jw-company">Company</label>
-            <select id="jw-company"></select>
-          </div>
-          <div class="field">
-            <label for="jw-product">Product</label>
-            <select id="jw-product"></select>
-            <div class="rate-readout" id="jw-rate-display">Rate: &#8212;</div>
-          </div>
-          <div class="field">
-            <label for="jw-output">Output produced</label>
-            <div style="display:flex; gap:6px;">
-              <input type="number" min="0" step="any" inputmode="decimal" id="jw-output" placeholder="0" style="flex:1; min-width:0;" />
-              <select id="jw-output-unit" class="unit-select" style="max-width:100px;">
-                <option value="Kg">Kg</option>
-                <option value="Litre">Litre</option>
-                <option value="Metric Tonne" selected>MT</option>
-              </select>
-            </div>
-          </div>
-        </div>
-        <p class="hint" id="jw-product-note" hidden style="margin:-8px 0 12px;"></p>
-
-        <div class="field wide" id="jw-source-batch-field" style="margin-bottom:16px;">
-          <label for="jw-source-batch">Pull raw materials from a Log Batch entry</label>
-          <select id="jw-source-batch"></select>
-          <p class="hint" id="jw-source-hint" style="margin-top:6px;"></p>
-        </div>
-
-        <div class="card-title" style="margin-top:6px;">Raw material used</div>
-        <div class="mat-search-row">
-          <input type="text" id="jw-mat-search" placeholder="Search a raw material&hellip;" />
-          <span class="hint">Leave unused materials blank</span>
-        </div>
-        <div id="jw-material-grid"></div>
-
-        <div class="labour-row">
-          <div class="field">
-            <label for="jw-operators">Operators (count)</label>
-            <input type="number" min="0" step="1" id="jw-operators" placeholder="0" />
-          </div>
-          <div class="field">
-            <label for="jw-loadmen">Loadmen (count)</label>
-            <input type="number" min="0" step="1" id="jw-loadmen" placeholder="0" />
-          </div>
-        </div>
-        <div class="field wide" style="margin-top:12px;">
-          <label for="jw-remarks">Remarks (optional)</label>
-          <textarea id="jw-remarks" placeholder="Anything the office should know about this batch"></textarea>
-        </div>
-      </div>
-
-      <div>
-        <div class="card summary-card">
-          <div class="card-title">This batch&rsquo;s profit / loss</div>
-          <div class="summary-row"><span class="k">Raw material cost</span><span class="v" id="jw-sum-rm">&#8377;0.00</span></div>
-          <div class="summary-row"><span class="k">Processing cost</span><span class="v" id="jw-sum-processing">&#8377;0.00</span></div>
-          <div class="summary-row"><span class="k">Labour cost</span><span class="v" id="jw-sum-labour">&#8377;0.00</span></div>
-          <div class="summary-total"><span class="k">Actual cost</span><span class="v" id="jw-sum-cost">&#8377;0.00</span></div>
-          <div class="summary-row" style="margin-top:8px;"><span class="k">Job work revenue</span><span class="v" id="jw-sum-revenue">&#8377;0.00</span></div>
-          <div class="summary-cpk" id="jw-sum-profit-box">
-            <div class="v" id="jw-sum-profit">&#8377;0.00</div>
-            <div class="k">Profit / loss</div>
-          </div>
-          <div id="jw-sum-mat-count" style="font-size:.72rem;color:var(--text-faint);margin-top:10px;text-align:center;">0 materials used</div>
-          <button class="btn btn-primary" id="jw-btn-submit">Save job work batch</button>
-        </div>
-
-        <div class="card" style="margin-top:16px;">
-          <div class="card-title-row">
-            <div class="card-title" id="jw-today-list-label" style="margin:0;">Job work batches today</div>
-            <select id="jw-date-jump" class="unit-select" style="max-width:220px;"></select>
-          </div>
-          <div id="jw-today-list"></div>
         </div>
       </div>
     </div>
@@ -662,6 +591,6 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
-<script src="app.js?v=12"></script>
+<script src="app.js?v=13"></script>
 </body>
 </html>

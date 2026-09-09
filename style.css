@@ -427,7 +427,7 @@ td.strong { font-weight: 700; }
 /* ---------- Job work profit / loss ---------- */
 .pl-positive { color: var(--success) !important; }
 .pl-negative { color: var(--critical) !important; }
-#jw-sum-profit-box.pl-positive { background: linear-gradient(135deg, var(--success-soft), var(--rust-soft)); }
-#jw-sum-profit-box.pl-negative { background: linear-gradient(135deg, var(--critical-soft), var(--accent-soft)); }
-#jw-sum-profit-box.pl-positive .v, #jw-sum-profit-box.pl-positive .k { color: var(--success); }
-#jw-sum-profit-box.pl-negative .v, #jw-sum-profit-box.pl-negative .k { color: var(--critical); }
+#f-jw-profit-box.pl-positive { background: linear-gradient(135deg, var(--success-soft), var(--rust-soft)); }
+#f-jw-profit-box.pl-negative { background: linear-gradient(135deg, var(--critical-soft), var(--accent-soft)); }
+#f-jw-profit-box.pl-positive .v, #f-jw-profit-box.pl-positive .k { color: var(--success); }
+#f-jw-profit-box.pl-negative .v, #f-jw-profit-box.pl-negative .k { color: var(--critical); }

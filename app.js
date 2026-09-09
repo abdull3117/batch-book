@@ -4,16 +4,22 @@
      settings/products   { items: [{id,name,unit}] }
      settings/labour     { operatorRate, loadmanRate, processingCost }
      entries/<id>         { date, productId, outputQty, materials:{id:qty}, operators, loadmen,
-                             remarks, rmCost, processingCost, labourCost, totalCost, costPerKg, createdAt }
+                             remarks, rmCost, processingCost, labourCost, totalCost, costPerKg, createdAt,
+                             jobworkCompanyId?, jobworkCompanyName?, jobworkRatePerMT?,
+                             jobworkRevenue?, jobworkProfit? }
+                           — the jobwork* fields are set only when a batch is tagged "Job work
+                           for" a contract company on the Log Batch form; a regular batch omits
+                           them entirely. There is no separate job-work entries collection —
+                           a job-work batch IS a normal entries/<id> doc, just tagged with which
+                           company it was made for, so its cost comes from the exact same
+                           computeCosts() pipeline as every other batch (see jobRateFor() below).
      stock/<date_productId> { date, productId, opening, dispatched, updatedAt }
      settings/jobwork     { companies: [{id,name,products:[{id,name,ratePerMT,note,productId}]}] }
-                           — productId (optional) links a job-work product to a regular Log
-                           Batch product (settings/products), so its raw materials & output
-                           can be pulled straight from an entries/<id> doc for the same date
-                           instead of being typed twice.
-     jobwork_entries/<id> { date, companyId, companyName, productId, productName, ratePerMT,
-                             outputQty, materials:{id:qty}, operators, loadmen, remarks,
-                             rmCost, processingCost, labourCost, actualCost, revenue, profit, createdAt }
+                           — productId links a job-work rate to the regular Log Batch product
+                           (settings/products) it applies to; a product must exist there first
+                           (Settings, or "+ Add product") before a rate can be linked to it.
+                           A rate with no productId yet is "not linked" — it won't be found by
+                           jobRateFor() until an admin links it from this Job Work tab.
 */
 
 (function () {
@@ -189,9 +195,6 @@
     reportFilter: { start: "", end: "", productId: "" },
     editingEntryId: null, // set while the form is editing an existing batch instead of logging a new one
     jobworkCompanies: DEFAULT_JOBWORK_COMPANIES.slice(),
-    jobworkEntries: [],
-    jobworkMaterialFilter: "",
-    editingJobEntryId: null,
   };
 
   // ---------------------------------------------------------------
@@ -240,15 +243,15 @@
   function jobCompanyById(id) {
     return state.jobworkCompanies.find((c) => c.id === id);
   }
-  // Finds a job-work product by id across every company, returning both
-  // the product and its parent company (a product id is only unique
-  // within its company's own product list).
-  function findJobProduct(productId) {
-    for (const c of state.jobworkCompanies) {
-      const p = (c.products || []).find((x) => x.id === productId);
-      if (p) return { company: c, product: p };
-    }
-    return null;
+  // Looks up whether a job-work company has a fixed rate set up for a
+  // regular Log Batch product — this is what lets a batch tagged "Job
+  // work for <company>" on the Log Batch form know its ₹/MT rate. Returns
+  // the rate entry ({id,name,ratePerMT,note,productId}) or null when
+  // that company has no rate linked to this product yet.
+  function jobRateFor(companyId, productId) {
+    const c = jobCompanyById(companyId);
+    if (!c || !productId) return null;
+    return (c.products || []).find((p) => p.productId === productId) || null;
   }
   function toast(msg, kind) {
     const host = $("#toast-host");
@@ -403,19 +406,24 @@
     return item;
   }
 
-  async function addJobProduct(companyId, name, rate, note, productId) {
-    name = (name || "").trim();
+  // A job-work rate always applies to a real Log Batch product — that's
+  // what lets a batch tagged "Job work for <company>" on the Log Batch
+  // form find its rate (see jobRateFor()). If the product doesn't exist
+  // yet in the regular product list, add it there first (Settings, or
+  // the entry form's "+ Add new product…"), then link a rate to it here.
+  async function addJobProduct(companyId, productId, rate, note) {
     const company = jobCompanyById(companyId);
     if (!company) { toast("Pick a company first.", "error"); return null; }
-    if (!name) { toast("Enter a product name.", "error"); return null; }
-    if ((company.products || []).some((p) => p.name.toLowerCase() === name.toLowerCase())) {
-      toast("\"" + name + "\" is already under " + company.name + ".", "warn");
+    productId = (productId || "").trim();
+    if (!productId) { toast("Pick which Log Batch product this rate applies to.", "error"); return null; }
+    const name = productName(productId);
+    if ((company.products || []).some((p) => p.productId === productId)) {
+      toast("\"" + name + "\" already has a rate under " + company.name + ".", "warn");
       return null;
     }
     const item = {
       id: "jwp_" + slugify(name) + "_" + Date.now().toString(36),
-      name, ratePerMT: Number(rate) || 0, note: (note || "").trim(),
-      productId: productId || "",
+      name, ratePerMT: Number(rate) || 0, note: (note || "").trim(), productId,
     };
     const updated = state.jobworkCompanies.map((c) =>
       c.id === companyId ? Object.assign({}, c, { products: (c.products || []).concat([item]) }) : c
@@ -429,8 +437,8 @@
 
   // Reads every rate input and linked-product select currently on screen
   // and saves them all in one go — used when a client's job-work price
-  // changes, or to link/relink a job-work product to the Log Batch
-  // product whose entries should auto-fill its raw materials & output.
+  // changes, or to link/relink a rate to the Log Batch product a batch
+  // must be tagged with (on the Log Batch form) for it to apply.
   async function saveJobRates() {
     const rateInputs = $all(".jw-rate-input");
     const linkSelects = $all(".jw-link-select");
@@ -440,25 +448,26 @@
         const linkSel = linkSelects.find((i) => i.dataset.companyId === c.id && i.dataset.productId === p.id);
         const next = Object.assign({}, p);
         if (rateInp) next.ratePerMT = Number(rateInp.value) || 0;
-        if (linkSel) next.productId = linkSel.value || "";
+        if (linkSel) { next.productId = linkSel.value || ""; if (next.productId) next.name = productName(next.productId); }
         return next;
       }),
     }));
     await saveJobworkCompanies(updated);
     toast("Job work rates & linked products saved.", "success");
     renderJobCompanies();
-    updateJobLiveSummary();
-    populateJobSourceBatchSelect();
+    populateJobworkCompanyPickers();
+    updateLiveSummary();
+    renderJobPnL();
   }
 
-  // Dropdown offered per job-work product (admin only) to link it to a
-  // regular Log Batch product — see populateJobSourceBatchSelect() below.
+  // Dropdown offered per job-work rate (admin only) to link/relink it to
+  // a regular Log Batch product — see jobRateFor() above.
   function buildJobLinkSelect(companyId, p) {
     const sel = el("select", {
       class: "jw-link-select", "data-company-id": companyId, "data-product-id": p.id,
       style: "min-width:170px;",
     });
-    sel.appendChild(el("option", { value: "" }, ["— Manual entry —"]));
+    sel.appendChild(el("option", { value: "" }, ["— Not linked yet —"]));
     state.products.forEach((prod) => sel.appendChild(el("option", { value: prod.id }, [prod.name])));
     sel.value = p.productId || "";
     return sel;
@@ -478,7 +487,7 @@
       if (!products.length) {
         body.appendChild(el("tr", {}, [
           el("td", {}, [c.name]),
-          el("td", { class: "empty-hint" }, ["No products added yet"]),
+          el("td", { class: "empty-hint" }, ["No rates added yet"]),
           el("td", {}, [""]),
           el("td", {}, [""]),
           el("td", { class: "num" }, [""]),
@@ -486,13 +495,14 @@
         return;
       }
       products.forEach((p, idx) => {
+        const linked = !!p.productId;
         body.appendChild(el("tr", {}, [
           el("td", {}, [idx === 0 ? c.name : ""]),
-          el("td", {}, [p.name]),
+          el("td", {}, [linked ? productName(p.productId) : (p.name + " ⚠")]),
           el("td", { style: "max-width:220px; white-space:normal; color:var(--text-faint); font-size:.78rem;" }, [p.note || ""]),
           el("td", {}, [
             isTeam
-              ? (p.productId ? productName(p.productId) : "— manual entry —")
+              ? (linked ? productName(p.productId) : "— not linked —")
               : buildJobLinkSelect(c.id, p),
           ]),
           el("td", { class: "num" }, [
@@ -560,7 +570,6 @@
         }
         renderSettingsMaterials();
         rebuildMaterialGrid();
-        rebuildJobMaterialGrid();
       },
       () => {}
     );
@@ -572,6 +581,8 @@
         }
         renderSettingsProducts();
         populateProductSelects();
+        renderJobCompanies();
+        renderJobPnL();
       },
       () => {}
     );
@@ -587,6 +598,7 @@
         }
         renderJobCompanies();
         populateJobCompanySelect();
+        renderJobPnL();
       },
       () => {}
     );
@@ -638,17 +650,9 @@
         renderTodayList();
         renderReports();
         renderStock();
-        populateJobSourceBatchSelect();
-      },
-      (e) => { toast("Sync error loading entries: " + e.message, "error"); }
-    );
-    db.collection("jobwork_entries").orderBy("createdAt", "desc").limit(500).onSnapshot(
-      (snap) => {
-        state.jobworkEntries = snap.docs.map((d) => Object.assign({ id: d.id }, d.data()));
-        renderJobTodayList();
         renderJobPnL();
       },
-      (e) => { toast("Sync error loading job work batches: " + e.message, "error"); }
+      (e) => { toast("Sync error loading entries: " + e.message, "error"); }
     );
     db.collection("stock").orderBy("date", "desc").limit(500).onSnapshot(
       (snap) => {
@@ -833,6 +837,51 @@
     $("#sum-cpk").textContent = outputQty > 0 ? fmtINR(c.costPerKg) : "—";
     const usedCount = Object.keys(mats).length;
     $("#sum-mat-count").textContent = usedCount + (usedCount === 1 ? " material used" : " materials used");
+    updateJobworkLiveSummary(outputQty, c);
+  }
+
+  // Job work readout on the Log Batch form — if this batch is tagged
+  // "Job work for <company>", shows that company's fixed ₹/MT rate for
+  // this product and computes revenue/profit-loss straight off this
+  // batch's own cost (c, from computeCosts() above). No separate costing
+  // logic — a job-work batch's cost is exactly the same as any other.
+  function updateJobworkLiveSummary(outputQty, c) {
+    const companySel = $("#f-jobwork-company");
+    const rateDisplay = $("#f-jobwork-rate-display");
+    const revenueRow = $("#f-jw-revenue-row");
+    const profitBox = $("#f-jw-profit-box");
+    const noRateHint = $("#f-jw-no-rate-hint");
+    const companyId = companySel ? companySel.value : "";
+    if (!companyId) {
+      if (rateDisplay) rateDisplay.hidden = true;
+      if (revenueRow) revenueRow.hidden = true;
+      if (profitBox) profitBox.hidden = true;
+      if (noRateHint) noRateHint.hidden = true;
+      return;
+    }
+    const productId = $("#f-product").value;
+    const jr = jobRateFor(companyId, productId);
+    if (!jr) {
+      if (rateDisplay) { rateDisplay.hidden = false; rateDisplay.textContent = "Rate: — (not linked for this product yet)"; }
+      if (revenueRow) revenueRow.hidden = true;
+      if (profitBox) profitBox.hidden = true;
+      if (noRateHint) {
+        noRateHint.hidden = false;
+        noRateHint.textContent = "No job work rate linked for this product yet — set one up on the Job Work tab.";
+      }
+      return;
+    }
+    if (noRateHint) noRateHint.hidden = true;
+    if (rateDisplay) { rateDisplay.hidden = false; rateDisplay.textContent = "Rate: " + fmtINR(jr.ratePerMT) + "/MT"; }
+    const revenue = (outputQty / KG_PER_MT) * jr.ratePerMT;
+    const profit = revenue - c.totalCost;
+    if (revenueRow) { revenueRow.hidden = false; $("#sum-jw-revenue").textContent = fmtINR(revenue); }
+    if (profitBox) {
+      profitBox.hidden = false;
+      $("#sum-jw-profit").textContent = (profit < 0 ? "-" : "") + fmtINR(Math.abs(profit));
+      profitBox.classList.remove("pl-positive", "pl-negative");
+      profitBox.classList.add(profit < 0 ? "pl-negative" : "pl-positive");
+    }
   }
 
   async function submitEntry() {
@@ -867,6 +916,26 @@
       createdAt: (existing && existing.createdAt) || new Date().toISOString(),
     };
     if (editingId) payload.updatedAt = new Date().toISOString();
+
+    // Job work tag — this batch IS the job-work record when a company is
+    // picked; revenue/profit are computed once, right here, off this
+    // batch's own cost (c), and saved alongside it.
+    const jobworkCompanyId = $("#f-jobwork-company") ? $("#f-jobwork-company").value : "";
+    if (jobworkCompanyId) {
+      const company = jobCompanyById(jobworkCompanyId);
+      const jr = jobRateFor(jobworkCompanyId, productId);
+      payload.jobworkCompanyId = jobworkCompanyId;
+      payload.jobworkCompanyName = company ? company.name : jobworkCompanyId;
+      if (jr) {
+        payload.jobworkRatePerMT = jr.ratePerMT;
+        payload.jobworkRevenue = (outputQty / KG_PER_MT) * jr.ratePerMT;
+        payload.jobworkProfit = payload.jobworkRevenue - c.totalCost;
+      } else {
+        payload.jobworkRatePerMT = null;
+        payload.jobworkRevenue = 0;
+        payload.jobworkProfit = -c.totalCost;
+      }
+    }
 
     const btn = $("#btn-submit");
     btn.disabled = true;
@@ -918,6 +987,7 @@
     $("#f-operators").value = "";
     $("#f-loadmen").value = "";
     $("#f-remarks").value = "";
+    if ($("#f-jobwork-company")) $("#f-jobwork-company").value = "";
     $all(".mat-input").forEach((i) => (i.value = ""));
     if (keepDate) $("#f-date").value = keepDate;
     updateLiveSummary();
@@ -1011,6 +1081,7 @@
     $("#f-operators").value = entry.operators || "";
     $("#f-loadmen").value = entry.loadmen || "";
     $("#f-remarks").value = opts.keepRemarks ? (entry.remarks || "") : "";
+    if ($("#f-jobwork-company")) $("#f-jobwork-company").value = entry.jobworkCompanyId || "";
     const mats = entry.materials || {};
     $all(".mat-input").forEach((inp) => {
       const v = mats[inp.dataset.mat];
@@ -1079,12 +1150,10 @@
   // form. Costs/rates are omitted for the team role, same as elsewhere.
   // ---------------------------------------------------------------
   let viewedEntry = null;
-  let viewedEntryKind = "batch"; // "batch" | "jobwork" — which edit fn "Edit this batch" should call
 
   function viewEntry(entry) {
     if (!entry) return;
     viewedEntry = entry;
-    viewedEntryKind = "batch";
     $("#view-modal-title").textContent = productName(entry.productId) + " — " + entry.date;
     const body = $("#view-modal-body");
     body.innerHTML = "";
@@ -1134,6 +1203,22 @@
       });
     }
 
+    if (entry.jobworkCompanyId) {
+      const profit = entry.jobworkProfit || 0;
+      body.appendChild(el("div", { class: "view-section-title" }, ["Job work"]));
+      [
+        ["Company", entry.jobworkCompanyName || entry.jobworkCompanyId],
+        ["Rate", entry.jobworkRatePerMT != null ? fmtINR(entry.jobworkRatePerMT) + "/MT" : "— (not linked)"],
+        ["Revenue", fmtINR(entry.jobworkRevenue)],
+        ["Profit / loss", (profit < 0 ? "-" : "") + fmtINR(Math.abs(profit))],
+      ].forEach(([k, v]) => {
+        body.appendChild(el("div", { class: "view-row" }, [
+          el("span", { class: "k" }, [k]),
+          el("span", { class: "v" + (k === "Profit / loss" ? (profit < 0 ? " pl-negative" : " pl-positive") : "") }, [String(v)]),
+        ]));
+      });
+    }
+
     $("#view-modal").hidden = false;
   }
 
@@ -1164,496 +1249,79 @@
   }
 
   // ---------------------------------------------------------------
-  // JOB WORK TAB — log contract-production batches for outside
-  // companies and track profit/loss against each product's fixed
-  // ₹/MT job-work rate. Mirrors the Log Batch flow above; actual cost
-  // uses the exact same computeCosts() as regular batches.
+  // JOB WORK TAB — manage contract companies & their fixed ₹/MT rates.
+  // A batch is tagged "Job work for <company>" right on the Log Batch
+  // form (see the ENTRY TAB section below) — there's no separate
+  // job-work batch-entry form, so nothing is ever typed twice. This tab
+  // is just company/rate setup plus a profit & loss report, both driven
+  // by the exact same entries every batch is already saved to.
   // ---------------------------------------------------------------
   function populateJobCompanySelect() {
-    const sel = $("#jw-company");
-    if (!sel) return;
-    const current = sel.value;
-    sel.innerHTML = "";
-    sel.appendChild(el("option", { value: "" }, ["Select company…"]));
-    state.jobworkCompanies.forEach((c) => sel.appendChild(el("option", { value: c.id }, [c.name])));
-    if (current) sel.value = current;
-    populateJobProductSelect();
-
     const addSel = $("#jw-new-product-company");
     if (addSel) {
-      const cur2 = addSel.value;
+      const cur = addSel.value;
       addSel.innerHTML = "";
       state.jobworkCompanies.forEach((c) => addSel.appendChild(el("option", { value: c.id }, [c.name])));
-      if (cur2) addSel.value = cur2;
+      if (cur) addSel.value = cur;
     }
-
     const repSel = $("#jw-rep-company");
     if (repSel) {
-      const cur3 = repSel.value;
+      const cur = repSel.value;
       repSel.innerHTML = "";
       repSel.appendChild(el("option", { value: "" }, ["All companies"]));
       state.jobworkCompanies.forEach((c) => repSel.appendChild(el("option", { value: c.id }, [c.name])));
-      if (cur3) repSel.value = cur3;
+      if (cur) repSel.value = cur;
     }
+    populateJobworkCompanyPickers();
   }
 
-  function populateJobProductSelect() {
-    const companySel = $("#jw-company");
-    const productSel = $("#jw-product");
-    if (!companySel || !productSel) return;
-    const current = productSel.value;
-    const company = jobCompanyById(companySel.value);
-    productSel.innerHTML = "";
-    productSel.appendChild(el("option", { value: "" }, ["Select product…"]));
-    (company ? company.products || [] : []).forEach((p) => {
-      productSel.appendChild(el("option", { value: p.id }, [p.name]));
-    });
-    if (current) productSel.value = current;
-    updateJobProductNote();
-  }
-
-  // Options for the "+ Add product" inline form's "link to a Log Batch
-  // product" picker — kept in sync whenever the regular product list
-  // changes (see populateProductSelects()).
+  // Options for the "+ Add product" inline form's "which product" picker
+  // — kept in sync whenever the regular product list changes (see
+  // populateProductSelects()).
   function populateJobProductLinkSelect() {
     const sel = $("#jw-new-product-link");
     if (!sel) return;
     const current = sel.value;
     sel.innerHTML = "";
-    sel.appendChild(el("option", { value: "" }, ["— Manual entry (no linked product) —"]));
+    sel.appendChild(el("option", { value: "" }, ["Select a Log Batch product…"]));
     state.products.forEach((p) => sel.appendChild(el("option", { value: p.id }, [p.name])));
     if (current) sel.value = current;
   }
 
-  // The rate now shows in its own readout next to the product picker
-  // (rather than packed into the dropdown option text above), plus the
-  // product's reference note when it has one.
-  function updateJobProductNote() {
-    const noteEl = $("#jw-product-note");
-    const rateEl = $("#jw-rate-display");
-    const found = findJobProduct($("#jw-product") ? $("#jw-product").value : "");
-    if (rateEl) rateEl.textContent = "Rate: " + (found ? fmtINR(found.product.ratePerMT) + "/MT" : "—");
-    if (!noteEl) return;
-    if (found && found.product.note) {
-      noteEl.textContent = "Note: " + found.product.note;
-      noteEl.hidden = false;
-    } else {
-      noteEl.hidden = true;
-      noteEl.textContent = "";
+  // The "Job work for" picker on the Log Batch form, and the "Company"
+  // filter on the Reports tab — both list every job-work company so a
+  // batch can be tagged, or reports filtered, by company.
+  function populateJobworkCompanyPickers() {
+    const entrySel = $("#f-jobwork-company");
+    if (entrySel) {
+      const cur = entrySel.value;
+      entrySel.innerHTML = "";
+      entrySel.appendChild(el("option", { value: "" }, ["— Regular production —"]));
+      state.jobworkCompanies.forEach((c) => entrySel.appendChild(el("option", { value: c.id }, [c.name])));
+      if (cur) entrySel.value = cur;
+    }
+    const repSel = $("#rep-company");
+    if (repSel) {
+      const cur = repSel.value;
+      repSel.innerHTML = "";
+      repSel.appendChild(el("option", { value: "" }, ["All companies"]));
+      state.jobworkCompanies.forEach((c) => repSel.appendChild(el("option", { value: c.id }, [c.name])));
+      if (cur) repSel.value = cur;
     }
   }
 
-  // ---------------------------------------------------------------
-  // Job work — pull raw materials & output straight from a batch
-  // already logged in Log Batch, instead of re-typing them here. Only
-  // offered once a job-work product is linked to a regular Log Batch
-  // product (set from the companies table above); otherwise the raw
-  // material grid below stays a normal manual entry, same as before.
-  // ---------------------------------------------------------------
-  function populateJobSourceBatchSelect() {
-    const sel = $("#jw-source-batch");
-    const hint = $("#jw-source-hint");
-    if (!sel) return;
-    const date = $("#jw-date") ? $("#jw-date").value : "";
-    const found = findJobProduct($("#jw-product") ? $("#jw-product").value : "");
-    const linkedProductId = found ? found.product.productId : "";
-    sel.innerHTML = "";
-    if (!found) {
-      sel.disabled = true;
-      sel.appendChild(el("option", { value: "" }, ["Pick a company and product first…"]));
-      if (hint) { hint.hidden = true; hint.textContent = ""; }
-      return;
-    }
-    if (!linkedProductId) {
-      sel.disabled = true;
-      sel.appendChild(el("option", { value: "" }, ["— Not linked to a Log Batch product —"]));
-      if (hint) {
-        hint.hidden = false;
-        hint.textContent = "An admin can link \"" + found.product.name + "\" to a Log Batch product in the companies table above. Until then, enter raw materials manually below.";
-      }
-      return;
-    }
-    const matches = state.entries.filter((e) => e.date === date && e.productId === linkedProductId);
-    sel.disabled = false;
-    sel.appendChild(el("option", { value: "" }, ["Select a logged batch to pull materials & output from…"]));
-    matches.forEach((e, idx) => {
-      const mt = fmtNum((e.outputQty || 0) / KG_PER_MT, 2);
-      sel.appendChild(el("option", { value: e.id }, ["Batch " + (idx + 1) + " — " + mt + " MT (" + productName(e.productId) + ")"]));
-    });
-    if (hint) {
-      hint.hidden = false;
-      hint.textContent = matches.length
-        ? "Picking a batch fills in its output and raw materials below — you can still adjust them before saving."
-        : "No " + productName(linkedProductId) + " batch logged in Log Batch for " + (date || "this date") + " yet — log it there first, or enter materials manually below.";
-    }
-  }
-
-  function applyJobSourceBatch() {
-    const sel = $("#jw-source-batch");
-    if (!sel || !sel.value) return;
-    const entry = state.entries.find((e) => e.id === sel.value);
-    if (!entry) return;
-    $("#jw-output").value = entry.outputQty ? entry.outputQty / KG_PER_MT : "";
-    if ($("#jw-output-unit")) $("#jw-output-unit").value = "Metric Tonne";
-    $("#jw-operators").value = entry.operators || "";
-    $("#jw-loadmen").value = entry.loadmen || "";
-    const mats = entry.materials || {};
-    $all(".jw-mat-input").forEach((inp) => {
-      const v = mats[inp.dataset.mat];
-      inp.value = v != null ? v : "";
-    });
-    toast("Pulled output & raw materials from that Log Batch entry — adjust if needed, then save.", "success");
-    updateJobLiveSummary();
-  }
-
-  function rebuildJobMaterialGrid() {
-    const grid = $("#jw-material-grid");
-    if (!grid) return;
-    const filter = state.jobworkMaterialFilter.trim().toLowerCase();
-    grid.innerHTML = "";
-    state.materials.forEach((m) => {
-      if (filter && m.name.toLowerCase().indexOf(filter) === -1) return;
-      const input = el("input", {
-        type: "number", min: "0", step: "any", inputmode: "decimal",
-        class: "mat-input jw-mat-input", "data-mat": m.id, placeholder: "0",
-      });
-      const row = el("div", { class: "mat-row" }, [
-        el("label", { class: "mat-label" }, [
-          el("span", { class: "mat-name", title: m.name }, [m.name]),
-          el("span", { class: "mat-unit" }, [m.unit]),
-        ]),
-        input,
-      ]);
-      grid.appendChild(row);
-    });
-  }
-
-  function getJobFormMaterialsQty() {
-    const out = {};
-    $all(".jw-mat-input").forEach((inp) => {
-      const v = parseFloat(inp.value);
-      if (v > 0) out[inp.dataset.mat] = v;
-    });
-    return out;
-  }
-
-  function updateJobLiveSummary() {
-    const outputVal = parseFloat($("#jw-output").value) || 0;
-    const outputUnit = $("#jw-output-unit").value;
-    const outputQty = outputToKg(outputVal, outputUnit);
-    const operators = parseFloat($("#jw-operators").value) || 0;
-    const loadmen = parseFloat($("#jw-loadmen").value) || 0;
-    const mats = getJobFormMaterialsQty();
-    const c = computeCosts(mats, outputQty, operators, loadmen);
-    const found = findJobProduct($("#jw-product") ? $("#jw-product").value : "");
-    const ratePerMT = found ? Number(found.product.ratePerMT) || 0 : 0;
-    const revenue = ratePerMT * (outputQty / KG_PER_MT);
-    const profit = revenue - c.totalCost;
-
-    $("#jw-sum-rm").textContent = fmtINR(c.rmCost);
-    $("#jw-sum-processing").textContent = fmtINR(c.processingCost);
-    $("#jw-sum-labour").textContent = fmtINR(c.labourCost);
-    $("#jw-sum-cost").textContent = fmtINR(c.totalCost);
-    $("#jw-sum-revenue").textContent = fmtINR(revenue);
-    const profitEl = $("#jw-sum-profit");
-    profitEl.textContent = (profit < 0 ? "-" : "") + fmtINR(Math.abs(profit));
-    const profitBox = $("#jw-sum-profit-box");
-    if (profitBox) {
-      profitBox.classList.remove("pl-positive", "pl-negative");
-      profitBox.classList.add(profit < 0 ? "pl-negative" : "pl-positive");
-    }
-    const usedCount = Object.keys(mats).length;
-    $("#jw-sum-mat-count").textContent = usedCount + (usedCount === 1 ? " material used" : " materials used");
-  }
-
-  async function submitJobEntry() {
-    const date = $("#jw-date").value;
-    const companyId = $("#jw-company").value;
-    const productId = $("#jw-product").value;
-    const outputVal = parseFloat($("#jw-output").value) || 0;
-    const outputUnit = $("#jw-output-unit").value;
-    const outputQty = outputToKg(outputVal, outputUnit);
-    const operators = parseFloat($("#jw-operators").value) || 0;
-    const loadmen = parseFloat($("#jw-loadmen").value) || 0;
-    const remarks = $("#jw-remarks").value.trim();
-    const mats = getJobFormMaterialsQty();
-
-    if (!date) return toast("Pick a date first.", "error");
-    if (!companyId) return toast("Pick a company first.", "error");
-    const found = findJobProduct(productId);
-    if (!found) return toast("Pick a product first.", "error");
-    if (outputVal <= 0) return toast("Enter the output quantity produced.", "error");
-    if (Object.keys(mats).length === 0) return toast("Enter at least one raw material quantity.", "error");
-
-    const c = computeCosts(mats, outputQty, operators, loadmen);
-    const ratePerMT = Number(found.product.ratePerMT) || 0;
-    const revenue = ratePerMT * (outputQty / KG_PER_MT);
-    const profit = revenue - c.totalCost;
-
-    const editingId = state.editingJobEntryId;
-    const existing = editingId ? state.jobworkEntries.find((e) => e.id === editingId) : null;
-    const payload = {
-      date, companyId, companyName: found.company.name, productId, productName: found.product.name,
-      ratePerMT, outputQty, materials: mats, operators, loadmen, remarks,
-      rmCost: c.rmCost, processingCost: c.processingCost, labourCost: c.labourCost,
-      actualCost: c.totalCost, revenue, profit,
-      createdAt: (existing && existing.createdAt) || new Date().toISOString(),
-    };
-    if (editingId) payload.updatedAt = new Date().toISOString();
-
-    const btn = $("#jw-btn-submit");
-    btn.disabled = true;
-    btn.textContent = editingId ? "Updating…" : "Saving…";
-    try {
-      const unitLabel = outputUnit === "Metric Tonne" ? "MT" : outputUnit;
-      if (state.db) {
-        if (editingId) {
-          await state.db.collection("jobwork_entries").doc(editingId).set(payload);
-          toast("Job work batch updated — " + found.product.name + ", " + fmtNum(outputVal, 2) + " " + unitLabel + ".", "success");
-        } else {
-          await state.db.collection("jobwork_entries").add(payload);
-          toast("Job work batch saved — " + found.product.name + ", " + fmtNum(outputVal, 2) + " " + unitLabel + ".", "success");
-        }
-      } else {
-        if (editingId) {
-          const idx = state.jobworkEntries.findIndex((e) => e.id === editingId);
-          if (idx !== -1) state.jobworkEntries[idx] = Object.assign({ id: editingId }, payload);
-          toast("Job work batch updated locally (preview only).", "warn");
-        } else {
-          payload.id = "local_" + Date.now();
-          state.jobworkEntries.unshift(payload);
-          toast("Saved locally (preview only — open the published link to sync).", "warn");
-        }
-        renderJobTodayList();
-        renderJobPnL();
-      }
-      state.editingJobEntryId = null;
-      if ($("#jw-edit-banner")) $("#jw-edit-banner").hidden = true;
-      resetJobEntryForm(date);
-      $("#jobwork-entry-form").scrollIntoView({ behavior: "smooth", block: "start" });
-      $("#jw-company").focus();
-    } catch (e) {
-      toast("Could not save: " + (e && e.message ? e.message : "unknown error"), "error");
-    } finally {
-      btn.disabled = false;
-      btn.textContent = state.editingJobEntryId ? "Update job work batch" : "Save job work batch";
-    }
-  }
-
-  function resetJobEntryForm(keepDate) {
-    $("#jw-company").value = "";
-    populateJobProductSelect();
-    $("#jw-output").value = "";
-    $("#jw-operators").value = "";
-    $("#jw-loadmen").value = "";
-    $("#jw-remarks").value = "";
-    $all(".jw-mat-input").forEach((i) => (i.value = ""));
-    if (keepDate) $("#jw-date").value = keepDate;
-    populateJobSourceBatchSelect();
-    updateJobLiveSummary();
-  }
-
-  function populateJobDateJump(dateVal) {
-    const sel = $("#jw-date-jump");
-    if (!sel) return;
-    dateVal = dateVal || ($("#jw-date") ? $("#jw-date").value || todayStr() : todayStr());
-    const counts = {};
-    state.jobworkEntries.forEach((e) => { if (e.date) counts[e.date] = (counts[e.date] || 0) + 1; });
-    if (!(dateVal in counts)) counts[dateVal] = 0;
-    const dates = Object.keys(counts).sort().reverse();
-    sel.innerHTML = "";
-    dates.forEach((d) => {
-      const n = counts[d];
-      sel.appendChild(el("option", { value: d }, [d + " (" + n + (n === 1 ? " batch)" : " batches)")]));
-    });
-    sel.value = dateVal;
-  }
-
-  function renderJobTodayList() {
-    const host = $("#jw-today-list");
-    if (!host) return;
-    const dateVal = $("#jw-date") ? $("#jw-date").value || todayStr() : todayStr();
-    populateJobDateJump(dateVal);
-    const rows = state.jobworkEntries.filter((e) => e.date === dateVal);
-    $("#jw-today-list-label").textContent = "Job work batches for " + dateVal +
-      (rows.length ? " (" + rows.length + (rows.length === 1 ? " batch" : " batches") + ")" : "");
-    host.innerHTML = "";
-    if (!rows.length) {
-      host.appendChild(el("div", { class: "empty-hint" }, ["No job work batches logged for this date yet."]));
-      return;
-    }
-    rows.forEach((r) => {
-      const outputMTVal = (r.outputQty || 0) / KG_PER_MT;
-      const profit = r.profit || 0;
-      const metaText = fmtNum(outputMTVal, 2) + " MT · " + r.companyName + " · " +
-        (profit < 0 ? "-" : "") + fmtINR(Math.abs(profit)) + (profit < 0 ? " loss" : " profit");
-      const row = el("div", { class: "today-row" }, [
-        el("div", { class: "today-main" }, [
-          el("span", { class: "today-product" }, [r.productName || productNameFallback(r)]),
-          el("span", { class: "today-meta " + (profit < 0 ? "pl-negative" : "pl-positive") }, [metaText]),
-        ]),
-        el("div", { class: "today-actions" }, [
-          el("button", { class: "icon-btn", title: "View this batch's full details", onclick: () => viewJobEntry(r) }, ["\u{1F441}"]),
-          el("button", { class: "icon-btn", title: "Edit this batch", onclick: () => editJobEntry(r) }, ["✎"]),
-          el("button", { class: "icon-btn", title: "Load this batch onto the form to log a similar one", onclick: () => duplicateJobEntry(r) }, ["⧉"]),
-          el("button", { class: "icon-btn danger", title: "Delete this batch", onclick: () => deleteJobEntry(r.id) }, ["✕"]),
-        ]),
-      ]);
-      if (state.editingJobEntryId === r.id) row.classList.add("today-row-editing");
-      host.appendChild(row);
-    });
-  }
-  function productNameFallback(r) { return r.productName || r.productId || "—"; }
-
-  function fillJobFormFromEntry(entry, opts) {
-    if (!entry) return;
-    opts = opts || {};
-    $("#jw-company").value = entry.companyId || "";
-    populateJobProductSelect();
-    $("#jw-product").value = entry.productId || "";
-    updateJobProductNote();
-    $("#jw-output").value = entry.outputQty ? entry.outputQty / KG_PER_MT : "";
-    if ($("#jw-output-unit")) $("#jw-output-unit").value = "Metric Tonne";
-    $("#jw-operators").value = entry.operators || "";
-    $("#jw-loadmen").value = entry.loadmen || "";
-    $("#jw-remarks").value = opts.keepRemarks ? (entry.remarks || "") : "";
-    const mats = entry.materials || {};
-    $all(".jw-mat-input").forEach((inp) => {
-      const v = mats[inp.dataset.mat];
-      inp.value = v != null ? v : "";
-    });
-    populateJobSourceBatchSelect();
-    updateJobLiveSummary();
-  }
-
-  function exitJobEditMode() {
-    state.editingJobEntryId = null;
-    if ($("#jw-edit-banner")) $("#jw-edit-banner").hidden = true;
-    if ($("#jw-btn-submit")) $("#jw-btn-submit").textContent = "Save job work batch";
-  }
-
-  function duplicateJobEntry(entry) {
-    exitJobEditMode();
-    fillJobFormFromEntry(entry);
-    toast("Loaded " + (entry.productName || "") + " onto the form — adjust and save as a new batch.", "success");
-    $("#jobwork-entry-form").scrollIntoView({ behavior: "smooth", block: "start" });
-    $("#jw-output").focus();
-  }
-
-  function editJobEntry(entry) {
-    if (!entry) return;
-    state.editingJobEntryId = entry.id;
-    fillJobFormFromEntry(entry, { keepRemarks: true });
-    $("#jw-date").value = entry.date || todayStr();
-    populateJobSourceBatchSelect();
-    if ($("#jw-edit-banner")) $("#jw-edit-banner").hidden = false;
-    if ($("#jw-edit-banner-text")) {
-      $("#jw-edit-banner-text").textContent = "Editing " + (entry.productName || "") + " for " + (entry.companyName || "") + " — " + entry.date + ".";
-    }
-    if ($("#jw-btn-submit")) $("#jw-btn-submit").textContent = "Update job work batch";
-    renderJobTodayList();
-    toast("Editing this job work batch — change the fields and save, or cancel to leave it as-is.", "success");
-    $("#jobwork-entry-form").scrollIntoView({ behavior: "smooth", block: "start" });
-    $("#jw-output").focus();
-  }
-
-  function cancelJobEdit() {
-    if (!state.editingJobEntryId) return;
-    exitJobEditMode();
-    resetJobEntryForm($("#jw-date").value || todayStr());
-    renderJobTodayList();
-    toast("Edit cancelled — nothing was changed.", "warn");
-  }
-
-  function viewJobEntry(entry) {
-    if (!entry) return;
-    viewedEntry = entry;
-    viewedEntryKind = "jobwork";
-    $("#view-modal-title").textContent = (entry.productName || "") + " — " + entry.companyName + " — " + entry.date;
-    const body = $("#view-modal-body");
-    body.innerHTML = "";
-    const rows = [
-      ["Date", entry.date || "—"],
-      ["Company", entry.companyName || "—"],
-      ["Product", entry.productName || "—"],
-      ["Output", fmtNum((entry.outputQty || 0) / KG_PER_MT, 2) + " MT"],
-      ["Operators", fmtNum(entry.operators || 0, 0)],
-      ["Loadmen", fmtNum(entry.loadmen || 0, 0)],
-    ];
-    rows.forEach(([k, v]) => {
-      body.appendChild(el("div", { class: "view-row" }, [
-        el("span", { class: "k" }, [k]), el("span", { class: "v" }, [String(v)]),
-      ]));
-    });
-
-    const mats = entry.materials || {};
-    const matIds = Object.keys(mats);
-    if (matIds.length) {
-      body.appendChild(el("div", { class: "view-section-title" }, ["Raw materials used"]));
-      matIds.forEach((id) => {
-        const m = materialById(id);
-        body.appendChild(el("div", { class: "view-row" }, [
-          el("span", { class: "k" }, [m ? m.name : id]),
-          el("span", { class: "v" }, [fmtNum(mats[id], 2) + " " + (m ? m.unit : "")]),
-        ]));
-      });
-    }
-
-    if (entry.remarks) {
-      body.appendChild(el("div", { class: "view-section-title" }, ["Remarks"]));
-      body.appendChild(el("div", { class: "view-row" }, [el("span", { class: "k" }, [entry.remarks])]));
-    }
-
-    body.appendChild(el("div", { class: "view-section-title" }, ["Job work profit / loss"]));
-    const profit = entry.profit || 0;
-    [
-      ["Raw material cost", fmtINR(entry.rmCost)],
-      ["Processing cost", fmtINR(entry.processingCost)],
-      ["Labour cost", fmtINR(entry.labourCost)],
-      ["Actual cost", fmtINR(entry.actualCost)],
-      ["Rate (₹/MT)", fmtINR(entry.ratePerMT)],
-      ["Revenue", fmtINR(entry.revenue)],
-      ["Profit / loss", (profit < 0 ? "-" : "") + fmtINR(Math.abs(profit))],
-    ].forEach(([k, v]) => {
-      body.appendChild(el("div", { class: "view-row" }, [
-        el("span", { class: "k" }, [k]), el("span", { class: "v" }, [v]),
-      ]));
-    });
-
-    $("#view-modal").hidden = false;
-  }
-
-  async function deleteJobEntry(id) {
-    if (!id) return;
-    if (!confirm("Delete this job work batch? This can't be undone.")) return;
-    try {
-      if (state.db && !String(id).startsWith("local_")) {
-        await state.db.collection("jobwork_entries").doc(id).delete();
-      } else {
-        state.jobworkEntries = state.jobworkEntries.filter((e) => e.id !== id);
-        renderJobTodayList();
-        renderJobPnL();
-      }
-      if (state.editingJobEntryId === id) {
-        exitJobEditMode();
-        resetJobEntryForm($("#jw-date").value || todayStr());
-      }
-      toast("Job work batch deleted.", "warn");
-    } catch (e) {
-      toast("Could not delete: " + e.message, "error");
-    }
-  }
-
-  // Profit & loss — date range + company filter over jobwork_entries,
-  // with per-company and day-by-day breakdowns.
+  // Profit & loss — date range + company filter over regular entries
+  // that were tagged "Job work for" a company, with per-company and
+  // day-by-day breakdowns.
   function filteredJobEntries() {
     const start = $("#jw-rep-start") ? $("#jw-rep-start").value : "";
     const end = $("#jw-rep-end") ? $("#jw-rep-end").value : "";
     const companyId = $("#jw-rep-company") ? $("#jw-rep-company").value : "";
-    return state.jobworkEntries.filter((e) => {
+    return state.entries.filter((e) => {
+      if (!e.jobworkCompanyId) return false;
       if (start && e.date < start) return false;
       if (end && e.date > end) return false;
-      if (companyId && e.companyId !== companyId) return false;
+      if (companyId && e.jobworkCompanyId !== companyId) return false;
       return true;
     });
   }
@@ -1664,8 +1332,8 @@
 
     const totalBatches = rows.length;
     const totalOutput = rows.reduce((s, r) => s + (r.outputQty || 0), 0);
-    const totalRevenue = rows.reduce((s, r) => s + (r.revenue || 0), 0);
-    const totalCost = rows.reduce((s, r) => s + (r.actualCost || 0), 0);
+    const totalRevenue = rows.reduce((s, r) => s + (r.jobworkRevenue || 0), 0);
+    const totalCost = rows.reduce((s, r) => s + (r.totalCost || 0), 0);
     const totalProfit = totalRevenue - totalCost;
 
     if ($("#jw-tile-batches")) $("#jw-tile-batches").textContent = fmtNum(totalBatches, 0);
@@ -1681,12 +1349,12 @@
     // per-company aggregation
     const byCompany = {};
     rows.forEach((r) => {
-      const k = r.companyId;
-      if (!byCompany[k]) byCompany[k] = { companyId: k, companyName: r.companyName, batches: 0, output: 0, revenue: 0, cost: 0 };
+      const k = r.jobworkCompanyId;
+      if (!byCompany[k]) byCompany[k] = { companyId: k, companyName: r.jobworkCompanyName, batches: 0, output: 0, revenue: 0, cost: 0 };
       byCompany[k].batches += 1;
       byCompany[k].output += r.outputQty || 0;
-      byCompany[k].revenue += r.revenue || 0;
-      byCompany[k].cost += r.actualCost || 0;
+      byCompany[k].revenue += r.jobworkRevenue || 0;
+      byCompany[k].cost += r.totalCost || 0;
     });
     const companyAgg = Object.values(byCompany).sort((a, b) => b.revenue - a.revenue);
     const companyBody = $("#jw-company-report-body");
@@ -1716,8 +1384,8 @@
       if (!byDay[k]) byDay[k] = { date: k, batches: 0, output: 0, revenue: 0, cost: 0 };
       byDay[k].batches += 1;
       byDay[k].output += r.outputQty || 0;
-      byDay[k].revenue += r.revenue || 0;
-      byDay[k].cost += r.actualCost || 0;
+      byDay[k].revenue += r.jobworkRevenue || 0;
+      byDay[k].cost += r.totalCost || 0;
     });
     const dayAgg = Object.values(byDay).sort((a, b) => (a.date < b.date ? 1 : -1));
     const dayBody = $("#jw-daily-report-body");
@@ -1740,7 +1408,8 @@
       }
     }
 
-    // full batch log
+    // full batch log — View/Edit take you to the same Log Batch entry
+    // these figures came from, since there's no separate job-work record.
     const logBody = $("#jw-batch-log-body");
     if (logBody) {
       logBody.innerHTML = "";
@@ -1748,19 +1417,19 @@
         logBody.appendChild(el("tr", {}, [el("td", { colspan: "8", class: "empty-hint" }, ["No job work batches logged in this range."])]));
       } else {
         rows.slice().sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0)).forEach((r) => {
-          const p = r.profit || 0;
+          const p = r.jobworkProfit || 0;
           logBody.appendChild(el("tr", {}, [
             el("td", {}, [r.date]),
-            el("td", {}, [r.companyName || r.companyId]),
-            el("td", {}, [r.productName || r.productId]),
+            el("td", {}, [r.jobworkCompanyName || r.jobworkCompanyId]),
+            el("td", {}, [productName(r.productId)]),
             el("td", { class: "num" }, [fmtNum((r.outputQty || 0) / KG_PER_MT, 2)]),
-            el("td", { class: "num" }, [fmtINR(r.revenue)]),
-            el("td", { class: "num" }, [fmtINR(r.actualCost)]),
+            el("td", { class: "num" }, [fmtINR(r.jobworkRevenue)]),
+            el("td", { class: "num" }, [fmtINR(r.totalCost)]),
             el("td", { class: "num strong " + (p < 0 ? "pl-negative" : "pl-positive") }, [(p < 0 ? "-" : "") + fmtINR(Math.abs(p))]),
             el("td", { class: "num" }, [
               el("div", { class: "today-actions", style: "justify-content:flex-end;" }, [
-                el("button", { class: "icon-btn", title: "View this batch's full details", onclick: () => viewJobEntry(r) }, ["\u{1F441}"]),
-                el("button", { class: "icon-btn", title: "Edit this batch", onclick: () => editJobEntry(r) }, ["✎"]),
+                el("button", { class: "icon-btn", title: "View this batch's full details", onclick: () => viewEntry(r) }, ["\u{1F441}"]),
+                el("button", { class: "icon-btn", title: "Edit this batch", onclick: () => editEntryFromReports(r) }, ["✎"]),
               ]),
             ]),
           ]));
@@ -1786,10 +1455,12 @@
     const start = $("#rep-start") ? $("#rep-start").value : "";
     const end = $("#rep-end") ? $("#rep-end").value : "";
     const productId = $("#rep-product") ? $("#rep-product").value : "";
+    const companyId = $("#rep-company") ? $("#rep-company").value : "";
     return state.entries.filter((e) => {
       if (start && e.date < start) return false;
       if (end && e.date > end) return false;
       if (productId && e.productId !== productId) return false;
+      if (companyId && e.jobworkCompanyId !== companyId) return false;
       return true;
     });
   }
@@ -1841,17 +1512,24 @@
     const logBody = $("#batch-log-body");
     logBody.innerHTML = "";
     if (!rows.length) {
-      logBody.appendChild(el("tr", {}, [el("td", { colspan: "9", class: "empty-hint" }, ["No batches logged in this range."])]));
+      logBody.appendChild(el("tr", {}, [el("td", { colspan: "12", class: "empty-hint" }, ["No batches logged in this range."])]));
     } else {
       rows.slice().sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0)).forEach((r) => {
+        const hasJobwork = !!r.jobworkCompanyId;
+        const profit = r.jobworkProfit || 0;
         logBody.appendChild(el("tr", {}, [
           el("td", {}, [r.date]),
           el("td", {}, [productName(r.productId)]),
+          el("td", {}, [hasJobwork ? (r.jobworkCompanyName || r.jobworkCompanyId) : "—"]),
           el("td", { class: "num" }, [fmtNum((r.outputQty || 0) / KG_PER_MT, 2)]),
           el("td", { class: "num" }, [fmtINR(r.rmCost)]),
           el("td", { class: "num" }, [fmtINR(r.processingCost)]),
           el("td", { class: "num" }, [fmtINR(r.labourCost)]),
           el("td", { class: "num strong" }, [fmtINR(r.totalCost)]),
+          el("td", { class: "num" }, [hasJobwork ? fmtINR(r.jobworkRevenue) : "—"]),
+          el("td", { class: "num strong" + (hasJobwork ? (profit < 0 ? " pl-negative" : " pl-positive") : "") }, [
+            hasJobwork ? (profit < 0 ? "-" : "") + fmtINR(Math.abs(profit)) : "—",
+          ]),
           el("td", { class: "num" }, [fmtINR(r.costPerKg)]),
           el("td", { class: "num" }, [
             el("div", { class: "today-actions", style: "justify-content:flex-end;" }, [
@@ -1912,11 +1590,14 @@
     return rows.map((r) => ({
       "Date": r.date,
       "Product": productName(r.productId),
+      "Job Work Company": r.jobworkCompanyId ? (r.jobworkCompanyName || r.jobworkCompanyId) : "",
       "Output (MT)": Number(((r.outputQty || 0) / KG_PER_MT).toFixed(2)),
       "RM Cost": r.rmCost || 0,
       "Processing Cost": r.processingCost || 0,
       "Labour Cost": r.labourCost || 0,
       "Total Cost": r.totalCost || 0,
+      "Revenue": r.jobworkCompanyId ? (r.jobworkRevenue || 0) : "",
+      "Profit / Loss": r.jobworkCompanyId ? (r.jobworkProfit || 0) : "",
       "Cost per Kg": r.costPerKg || 0,
     }));
   }
@@ -2256,15 +1937,15 @@
       $("#btn-view-edit").addEventListener("click", () => {
         if (!viewedEntry) return;
         const entry = viewedEntry;
-        const kind = viewedEntryKind;
         closeViewModal();
-        if (kind === "jobwork") editJobEntry(entry); else editEntry(entry);
+        editEntry(entry);
       });
     }
     $("#mat-search").addEventListener("input", (e) => {
       state.materialFilter = e.target.value;
       rebuildMaterialGrid();
     });
+    if ($("#f-jobwork-company")) $("#f-jobwork-company").addEventListener("change", updateLiveSummary);
 
     // Entry form — "+ Add new product…" inline
     $("#f-product").addEventListener("change", () => {
@@ -2353,8 +2034,8 @@
     $("#btn-download-xlsx").addEventListener("click", downloadExcel);
     $("#btn-download-pdf").addEventListener("click", downloadPDF);
 
-    ["#rep-start", "#rep-end", "#rep-product"].forEach((sel) => {
-      $(sel).addEventListener("change", renderReports);
+    ["#rep-start", "#rep-end", "#rep-product", "#rep-company"].forEach((sel) => {
+      if ($(sel)) $(sel).addEventListener("change", renderReports);
     });
     $("#rep-start").value = monthStartStr();
     $("#rep-end").value = todayStr();
@@ -2385,34 +2066,6 @@
       "#s-budgeted-output-mt",
     ].forEach((sel) => $(sel).addEventListener("input", updateProcessingBreakdownReadout));
 
-    // Job Work tab
-    if ($("#jw-date")) {
-      $("#jw-date").value = todayStr();
-      $("#jw-date").addEventListener("change", () => { renderJobTodayList(); populateJobSourceBatchSelect(); });
-    }
-    if ($("#jw-date-jump")) {
-      $("#jw-date-jump").addEventListener("change", () => {
-        const v = $("#jw-date-jump").value;
-        if (!v) return;
-        exitJobEditMode();
-        $("#jw-date").value = v;
-        renderJobTodayList();
-        $("#jw-today-list-label").scrollIntoView({ behavior: "smooth", block: "start" });
-      });
-    }
-    if ($("#jobwork-entry-form")) $("#jobwork-entry-form").addEventListener("input", updateJobLiveSummary);
-    if ($("#jw-btn-submit")) $("#jw-btn-submit").addEventListener("click", submitJobEntry);
-    if ($("#jw-btn-cancel-edit")) $("#jw-btn-cancel-edit").addEventListener("click", cancelJobEdit);
-    if ($("#jw-mat-search")) {
-      $("#jw-mat-search").addEventListener("input", (e) => {
-        state.jobworkMaterialFilter = e.target.value;
-        rebuildJobMaterialGrid();
-      });
-    }
-    if ($("#jw-company")) $("#jw-company").addEventListener("change", () => { populateJobProductSelect(); updateJobLiveSummary(); populateJobSourceBatchSelect(); });
-    if ($("#jw-product")) $("#jw-product").addEventListener("change", () => { updateJobProductNote(); updateJobLiveSummary(); populateJobSourceBatchSelect(); });
-    if ($("#jw-source-batch")) $("#jw-source-batch").addEventListener("change", applyJobSourceBatch);
-
     // Job Work — company / product management (admin only)
     if ($("#jw-btn-show-add-company")) {
       $("#jw-btn-show-add-company").addEventListener("click", () => {
@@ -2438,13 +2091,12 @@
     if ($("#jw-btn-show-add-product")) {
       $("#jw-btn-show-add-product").addEventListener("click", () => {
         $("#jw-add-product-row").hidden = false;
-        $("#jw-new-product-name").focus();
+        if ($("#jw-new-product-link")) $("#jw-new-product-link").focus();
       });
     }
     if ($("#jw-btn-cancel-add-product")) {
       $("#jw-btn-cancel-add-product").addEventListener("click", () => {
         $("#jw-add-product-row").hidden = true;
-        $("#jw-new-product-name").value = "";
         $("#jw-new-product-rate").value = "";
         $("#jw-new-product-note").value = "";
         if ($("#jw-new-product-link")) $("#jw-new-product-link").value = "";
@@ -2454,13 +2106,11 @@
       $("#jw-btn-confirm-add-product").addEventListener("click", async () => {
         const item = await addJobProduct(
           $("#jw-new-product-company").value,
-          $("#jw-new-product-name").value,
+          $("#jw-new-product-link") ? $("#jw-new-product-link").value : "",
           $("#jw-new-product-rate").value,
-          $("#jw-new-product-note").value,
-          $("#jw-new-product-link") ? $("#jw-new-product-link").value : ""
+          $("#jw-new-product-note").value
         );
         if (item) {
-          $("#jw-new-product-name").value = "";
           $("#jw-new-product-rate").value = "";
           $("#jw-new-product-note").value = "";
           if ($("#jw-new-product-link")) $("#jw-new-product-link").value = "";
@@ -2500,12 +2150,8 @@
     renderTodayList();
     renderReports();
     renderStock();
-    rebuildJobMaterialGrid();
     populateJobCompanySelect();
     renderJobCompanies();
-    populateJobSourceBatchSelect();
-    updateJobLiveSummary();
-    renderJobTodayList();
     renderJobPnL();
   }
 
