@@ -55,6 +55,11 @@
           <div class="field" style="grid-column: span 2;">
             <label for="f-product">Product</label>
             <select id="f-product" class="product-select"></select>
+            <div class="inline-add-row" id="add-product-inline" hidden>
+              <input type="text" id="new-prod-name-inline" placeholder="New product name" />
+              <button type="button" class="btn btn-primary btn-small" id="btn-confirm-add-product-inline">Add</button>
+              <button type="button" class="btn btn-secondary btn-small" id="btn-cancel-add-product-inline">Cancel</button>
+            </div>
           </div>
           <div class="field">
             <label for="f-output">Output produced (Kg)</label>
@@ -66,6 +71,14 @@
         <div class="mat-search-row">
           <input type="text" id="mat-search" placeholder="Search a raw material&hellip;" />
           <span class="hint">Leave unused materials blank</span>
+          <button type="button" class="btn btn-secondary btn-small" id="btn-show-add-material-inline">+ Add material</button>
+        </div>
+        <div class="inline-add-row" id="add-material-inline" hidden>
+          <input type="text" id="new-mat-name-inline" placeholder="Material name" />
+          <input type="text" id="new-mat-unit-inline" placeholder="Unit" value="Kg" style="max-width:90px;" />
+          <input type="number" id="new-mat-rate-inline" placeholder="Rate &#8377;/unit" min="0" step="any" style="max-width:120px;" />
+          <button type="button" class="btn btn-primary btn-small" id="btn-confirm-add-material-inline">Add</button>
+          <button type="button" class="btn btn-secondary btn-small" id="btn-cancel-add-material-inline">Cancel</button>
         </div>
         <div id="material-grid"></div>
 
@@ -170,7 +183,14 @@
     </div>
 
     <div class="card">
-      <div class="card-title">Batch log</div>
+      <div class="card-title-row">
+        <div class="card-title" style="margin:0;">Batch log</div>
+        <div class="download-row">
+          <button class="btn btn-secondary btn-small" id="btn-download-csv">Download CSV</button>
+          <button class="btn btn-secondary btn-small" id="btn-download-xlsx">Download Excel</button>
+          <button class="btn btn-secondary btn-small" id="btn-download-pdf">Download PDF</button>
+        </div>
+      </div>
       <div class="table-wrap">
         <table>
           <thead>
@@ -247,7 +267,17 @@
             <tbody id="settings-materials-body"></tbody>
           </table>
         </div>
-        <button class="btn btn-primary" id="btn-save-rates">Save rates</button>
+        <div class="add-item-row" id="add-material-row" hidden>
+          <input type="text" id="new-mat-name" placeholder="Material name" />
+          <input type="text" id="new-mat-unit" placeholder="Unit" value="Kg" style="max-width:90px;" />
+          <input type="number" id="new-mat-rate" placeholder="Rate &#8377;/unit" min="0" step="any" style="max-width:120px;" />
+          <button class="btn btn-primary btn-small" id="btn-confirm-add-material">Add</button>
+          <button class="btn btn-secondary btn-small" id="btn-cancel-add-material">Cancel</button>
+        </div>
+        <div class="btn-row">
+          <button class="btn btn-secondary btn-small" id="btn-show-add-material">+ Add material</button>
+          <button class="btn btn-primary" id="btn-save-rates">Save rates</button>
+        </div>
       </div>
 
       <div>
@@ -278,6 +308,13 @@
               <tbody id="settings-products-body"></tbody>
             </table>
           </div>
+          <div class="add-item-row" id="add-product-row" hidden>
+            <input type="text" id="new-prod-name" placeholder="Product name" />
+            <input type="text" id="new-prod-unit" placeholder="Unit" value="Kg" style="max-width:90px;" />
+            <button class="btn btn-primary btn-small" id="btn-confirm-add-product">Add</button>
+            <button class="btn btn-secondary btn-small" id="btn-cancel-add-product">Cancel</button>
+          </div>
+          <button class="btn btn-secondary btn-small" id="btn-show-add-product" style="margin-top:12px;">+ Add product</button>
         </div>
       </div>
     </div>
@@ -292,6 +329,10 @@
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore-compat.js"></script>
 <script src="firebase-config.js"></script>
+<!-- Export libraries: Excel (SheetJS) and PDF (jsPDF + autotable) for the Reports download buttons -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

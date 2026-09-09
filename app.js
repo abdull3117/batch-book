@@ -57,6 +57,13 @@
 
   const DEFAULT_LABOUR = { operatorRate: 600, loadmanRate: 500, processingCost: 2000 };
 
+  // Google Sheets sync — Apps Script Web App URL. Every saved batch is
+  // also pushed here as a row, so there's always a live spreadsheet
+  // copy of all entries. Firestore (above) remains the source of truth
+  // the app itself reads from; this push is fire-and-forget and never
+  // blocks or fails a save if the sheet is unreachable.
+  const SHEETS_SYNC_URL = "";
+
   // ---------------------------------------------------------------
   // State
   // ---------------------------------------------------------------
@@ -139,6 +146,62 @@
     const totalCost = rmCost + processingCost + labourCost;
     const costPerKg = outputQty > 0 ? totalCost / outputQty : 0;
     return { rmCost, processingCost, labourCost, totalCost, costPerKg };
+  }
+
+  // ---------------------------------------------------------------
+  // Add a new raw material / product on the fly — so supervisors
+  // aren't limited to the predefined master list.
+  // ---------------------------------------------------------------
+  function slugify(name) {
+    return name.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+  }
+
+  async function addMaterial(name, unit, rate) {
+    name = (name || "").trim();
+    if (!name) { toast("Enter a material name.", "error"); return null; }
+    if (state.materials.some((m) => m.name.toLowerCase() === name.toLowerCase())) {
+      toast("\"" + name + "\" is already in the list.", "warn");
+      return null;
+    }
+    const item = {
+      id: "rm_custom_" + slugify(name) + "_" + Date.now().toString(36),
+      name, unit: (unit || "Kg").trim() || "Kg", rate: Number(rate) || 0,
+    };
+    const updated = state.materials.concat([item]);
+    state.materials = updated;
+    try {
+      if (state.db) await state.db.doc("settings/materials").set({ items: updated });
+      toast("Added \"" + name + "\" to raw materials.", "success");
+    } catch (e) {
+      toast("Added, but couldn't sync yet: " + e.message, "warn");
+    }
+    renderSettingsMaterials();
+    rebuildMaterialGrid();
+    return item;
+  }
+
+  async function addProduct(name, unit) {
+    name = (name || "").trim();
+    if (!name) { toast("Enter a product name.", "error"); return null; }
+    if (state.products.some((p) => p.name.toLowerCase() === name.toLowerCase())) {
+      toast("\"" + name + "\" is already in the list.", "warn");
+      return null;
+    }
+    const item = {
+      id: "p_custom_" + slugify(name) + "_" + Date.now().toString(36),
+      name, unit: (unit || "Kg").trim() || "Kg",
+    };
+    const updated = state.products.concat([item]);
+    state.products = updated;
+    try {
+      if (state.db) await state.db.doc("settings/products").set({ items: updated });
+      toast("Added \"" + name + "\" to products.", "success");
+    } catch (e) {
+      toast("Added, but couldn't sync yet: " + e.message, "warn");
+    }
+    renderSettingsProducts();
+    populateProductSelects();
+    return item;
   }
 
   // ---------------------------------------------------------------
@@ -252,6 +315,19 @@
   }
 
   // ---------------------------------------------------------------
+  // Push a saved entry into the Google Sheet copy. Best-effort only —
+  // Firestore is already saved by the time this runs, so a failure or
+  // slow network here never loses data or blocks the supervisor.
+  // ---------------------------------------------------------------
+  function syncEntryToSheet(entryId, payload) {
+    if (!SHEETS_SYNC_URL) return;
+    try {
+      const body = JSON.stringify(Object.assign({ id: entryId, productName: productName(payload.productId) }, payload));
+      fetch(SHEETS_SYNC_URL, { method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" }, body }).catch(() => {});
+    } catch (e) { /* ignore — sheet sync is best-effort */ }
+  }
+
+  // ---------------------------------------------------------------
   // ENTRY TAB
   // ---------------------------------------------------------------
   function rebuildMaterialGrid() {
@@ -284,6 +360,7 @@
       state.products.forEach((p) => {
         sel.appendChild(el("option", { value: p.id }, [p.name]));
       });
+      sel.appendChild(el("option", { value: "__other__" }, ["+ Add new product…"]));
       if (current) sel.value = current;
     });
     populateStockProductSelect();
@@ -325,6 +402,7 @@
 
     if (!date) return toast("Pick a date first.", "error");
     if (!productId) return toast("Pick a product first.", "error");
+    if (productId === "__other__") return toast("Finish adding the new product first.", "error");
     if (outputQty <= 0) return toast("Enter the output quantity produced.", "error");
     if (Object.keys(mats).length === 0) return toast("Enter at least one raw material quantity.", "error");
 
@@ -341,7 +419,8 @@
     btn.textContent = "Saving…";
     try {
       if (state.db) {
-        await state.db.collection("entries").add(payload);
+        const ref = await state.db.collection("entries").add(payload);
+        syncEntryToSheet(ref.id, payload);
         toast("Batch saved — " + productName(productId) + ", " + fmtNum(outputQty, 0) + " Kg. Ready for the next batch.", "success");
       } else {
         payload.id = "local_" + Date.now();
@@ -583,6 +662,82 @@
   }
 
   // ---------------------------------------------------------------
+  // REPORTS — downloads (CSV / Excel / PDF)
+  // ---------------------------------------------------------------
+  function reportExportRows() {
+    const rows = filteredEntries().slice().sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+    return rows.map((r) => ({
+      "Date": r.date,
+      "Product": productName(r.productId),
+      "Output (Kg)": r.outputQty || 0,
+      "RM Cost": r.rmCost || 0,
+      "Processing Cost": r.processingCost || 0,
+      "Labour Cost": r.labourCost || 0,
+      "Total Cost": r.totalCost || 0,
+      "Cost per Kg": r.costPerKg || 0,
+    }));
+  }
+
+  function reportFileBaseName() {
+    const start = ($("#rep-start") && $("#rep-start").value) || "all";
+    const end = ($("#rep-end") && $("#rep-end").value) || "all";
+    return "batch-book-report_" + start + "_to_" + end;
+  }
+
+  function triggerDownload(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const a = el("a", { href: url, download: filename });
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  function downloadCSV() {
+    const rows = reportExportRows();
+    if (!rows.length) return toast("No batches in this range to export.", "warn");
+    const headers = Object.keys(rows[0]);
+    const esc = (v) => {
+      if (typeof v === "string" && /[",\n]/.test(v)) return '"' + v.replace(/"/g, '""') + '"';
+      return v;
+    };
+    const lines = [headers.join(",")];
+    rows.forEach((r) => lines.push(headers.map((h) => esc(r[h])).join(",")));
+    const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8;" });
+    triggerDownload(blob, reportFileBaseName() + ".csv");
+    toast("CSV downloaded.", "success");
+  }
+
+  function downloadExcel() {
+    if (typeof XLSX === "undefined") return toast("Excel export library didn't load — check your connection and try again.", "error");
+    const rows = reportExportRows();
+    if (!rows.length) return toast("No batches in this range to export.", "warn");
+    const ws = XLSX.utils.json_to_sheet(rows);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Batch Log");
+    XLSX.writeFile(wb, reportFileBaseName() + ".xlsx");
+    toast("Excel file downloaded.", "success");
+  }
+
+  function downloadPDF() {
+    if (typeof window.jspdf === "undefined") return toast("PDF export library didn't load — check your connection and try again.", "error");
+    const rows = reportExportRows();
+    if (!rows.length) return toast("No batches in this range to export.", "warn");
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ orientation: "landscape" });
+    doc.setFontSize(14);
+    doc.text("Batch Book — Production Report (EMR Fertilizers)", 14, 15);
+    doc.setFontSize(9);
+    const range = (($("#rep-start") && $("#rep-start").value) || "All time") + "   to   " + (($("#rep-end") && $("#rep-end").value) || "present");
+    doc.text(range, 14, 21);
+    const headers = [Object.keys(rows[0])];
+    const body = rows.map((r) => Object.values(r).map((v) => (typeof v === "number" ? fmtNum(v, 2) : v)));
+    doc.autoTable({ head: headers, body, startY: 26, styles: { fontSize: 8 }, headStyles: { fillColor: [201, 124, 14] } });
+    doc.save(reportFileBaseName() + ".pdf");
+    toast("PDF downloaded.", "success");
+  }
+
+  // ---------------------------------------------------------------
   // STOCK TAB
   // ---------------------------------------------------------------
   function populateStockProductSelect() {
@@ -751,6 +906,91 @@
       state.materialFilter = e.target.value;
       rebuildMaterialGrid();
     });
+
+    // Entry form — "+ Add new product…" inline
+    $("#f-product").addEventListener("change", () => {
+      const isOther = $("#f-product").value === "__other__";
+      $("#add-product-inline").hidden = !isOther;
+      if (isOther) $("#new-prod-name-inline").focus();
+    });
+    $("#btn-confirm-add-product-inline").addEventListener("click", async () => {
+      const item = await addProduct($("#new-prod-name-inline").value, "Kg");
+      if (item) {
+        $("#new-prod-name-inline").value = "";
+        $("#add-product-inline").hidden = true;
+        $("#f-product").value = item.id;
+        updateLiveSummary();
+      }
+    });
+    $("#btn-cancel-add-product-inline").addEventListener("click", () => {
+      $("#new-prod-name-inline").value = "";
+      $("#add-product-inline").hidden = true;
+      $("#f-product").value = "";
+    });
+
+    // Entry form — "+ Add material" inline
+    $("#btn-show-add-material-inline").addEventListener("click", () => {
+      $("#add-material-inline").hidden = false;
+      $("#new-mat-name-inline").focus();
+    });
+    $("#btn-cancel-add-material-inline").addEventListener("click", () => {
+      $("#add-material-inline").hidden = true;
+      $("#new-mat-name-inline").value = "";
+      $("#new-mat-rate-inline").value = "";
+    });
+    $("#btn-confirm-add-material-inline").addEventListener("click", async () => {
+      const item = await addMaterial(
+        $("#new-mat-name-inline").value,
+        $("#new-mat-unit-inline").value,
+        $("#new-mat-rate-inline").value
+      );
+      if (item) {
+        $("#new-mat-name-inline").value = "";
+        $("#new-mat-rate-inline").value = "";
+        $("#new-mat-unit-inline").value = "Kg";
+        $("#add-material-inline").hidden = true;
+      }
+    });
+
+    // Settings — "+ Add material"
+    $("#btn-show-add-material").addEventListener("click", () => {
+      $("#add-material-row").hidden = false;
+      $("#new-mat-name").focus();
+    });
+    $("#btn-cancel-add-material").addEventListener("click", () => {
+      $("#add-material-row").hidden = true;
+    });
+    $("#btn-confirm-add-material").addEventListener("click", async () => {
+      const item = await addMaterial($("#new-mat-name").value, $("#new-mat-unit").value, $("#new-mat-rate").value);
+      if (item) {
+        $("#new-mat-name").value = "";
+        $("#new-mat-unit").value = "Kg";
+        $("#new-mat-rate").value = "";
+        $("#add-material-row").hidden = true;
+      }
+    });
+
+    // Settings — "+ Add product"
+    $("#btn-show-add-product").addEventListener("click", () => {
+      $("#add-product-row").hidden = false;
+      $("#new-prod-name").focus();
+    });
+    $("#btn-cancel-add-product").addEventListener("click", () => {
+      $("#add-product-row").hidden = true;
+    });
+    $("#btn-confirm-add-product").addEventListener("click", async () => {
+      const item = await addProduct($("#new-prod-name").value, $("#new-prod-unit").value);
+      if (item) {
+        $("#new-prod-name").value = "";
+        $("#new-prod-unit").value = "Kg";
+        $("#add-product-row").hidden = true;
+      }
+    });
+
+    // Reports — downloads
+    $("#btn-download-csv").addEventListener("click", downloadCSV);
+    $("#btn-download-xlsx").addEventListener("click", downloadExcel);
+    $("#btn-download-pdf").addEventListener("click", downloadPDF);
 
     ["#rep-start", "#rep-end", "#rep-product"].forEach((sel) => {
       $(sel).addEventListener("change", renderReports);

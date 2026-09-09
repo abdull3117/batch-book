@@ -272,6 +272,24 @@ td.strong { font-weight: 700; }
 @media (max-width: 900px) { .settings-grid { grid-template-columns: 1fr; } }
 .max-scroll { max-height: 420px; overflow-y: auto; }
 
+/* ---------- Add material / product ---------- */
+.btn-row { display: flex; gap: 10px; align-items: center; margin-top: 16px; }
+.btn-row .btn-primary { margin-top: 0; width: auto; flex: 1; }
+.add-item-row, .inline-add-row {
+  display: flex; gap: 8px; flex-wrap: wrap; align-items: center;
+  margin-top: 12px; padding: 10px; background: var(--surface-2); border-radius: var(--radius-sm);
+}
+.inline-add-row { margin: 8px 0 0; }
+.add-item-row input, .inline-add-row input {
+  background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
+  padding: 7px 9px; flex: 1; min-width: 110px; color: var(--text);
+}
+.add-item-row input:focus, .inline-add-row input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* ---------- Reports download row ---------- */
+.card-title-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }
+.download-row { display: flex; gap: 8px; flex-wrap: wrap; }
+
 /* ---------- Toasts ---------- */
 #toast-host { position: fixed; bottom: 18px; right: 18px; z-index: 100; display: flex; flex-direction: column; gap: 8px; max-width: 320px; }
 .toast {
