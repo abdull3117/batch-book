@@ -302,9 +302,9 @@
       </div>
       <div class="field-row" style="margin-top:-6px;">
         <div class="field wide">
-          <label for="st-company">Dispatch to company (optional)</label>
+          <label for="st-company">Company (optional)</label>
           <select id="st-company"></select>
-          <p class="hint" style="margin-top:6px;">Leave as &ldquo;Regular stock/dispatch&rdquo; for ordinary sales. Pick a job work company to record finished goods dispatched back to that client &mdash; no opening balance needed for those, just the quantity sent.</p>
+          <p class="hint" style="margin-top:6px;">Leave as &ldquo;Regular stock/dispatch&rdquo; for ordinary sales. Pick a job work company to track that company&rsquo;s own opening, production and dispatch separately &mdash; batches logged for that company fill in Produced automatically; enter Dispatched here to carry into that company&rsquo;s next opening balance.</p>
         </div>
       </div>
       <button class="btn btn-primary" id="btn-stock-save" style="max-width:240px;">Save stock entry</button>
@@ -604,6 +604,6 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
-<script src="app.js?v=14"></script>
+<script src="app.js?v=15"></script>
 </body>
 </html>

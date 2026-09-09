@@ -755,6 +755,10 @@
     state.activeTab = tab;
     $all(".tab-btn").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
     $all(".view").forEach((v) => v.classList.toggle("active", v.id === "view-" + tab));
+    // Batches logged elsewhere populate a company's/regular's Produced
+    // figure automatically — make sure the ledger reflects the latest
+    // entries the moment someone opens the Stock tab.
+    if (tab === "stock") renderStock();
   }
 
   // ---------------------------------------------------------------
@@ -964,6 +968,7 @@
         }
         renderTodayList();
         renderReports();
+        renderStock();
       }
       state.editingEntryId = null;
       if ($("#edit-banner")) $("#edit-banner").hidden = true;
@@ -1693,41 +1698,72 @@
     if (current) sel.value = current;
   }
 
-  // A date+product's overall stock can now have several docs: one
-  // "regular" entry (no company — holds the opening balance) plus zero or
-  // more company-tagged dispatch entries (finished goods sent back to a
-  // job work client on that date). These helpers treat all of them as one
-  // ledger per date+product so the running balance stays correct however
-  // many companies were dispatched to on a given day.
-  function stockRowsFor(date, productId) {
-    return state.stock.filter((s) => s.date === date && s.productId === productId);
+  // Every company (plus the "regular"/no-company bucket) now runs its own
+  // fully independent Opening -> Produced -> Dispatched -> Closing chain
+  // for a given product. A batch logged against a job-work company feeds
+  // that SAME company's Produced automatically; Dispatched is still typed
+  // in manually on the Stock tab and rolls into that company's own next
+  // opening balance. Nothing is pooled or shared across companies anymore.
+  function stockKey(companyId) {
+    return companyId || "";
   }
-  function regularStockRow(date, productId) {
-    return stockRowsFor(date, productId).find((s) => !s.companyId) || null;
+  function stockRowFor(date, productId, companyId) {
+    const key = stockKey(companyId);
+    return state.stock.find((s) => s.date === date && s.productId === productId && stockKey(s.companyId) === key) || null;
   }
-  function totalDispatchedFor(date, productId) {
-    return stockRowsFor(date, productId).reduce((sum, s) => sum + (Number(s.dispatched) || 0), 0);
+  // All distinct (date, companyId) buckets that exist for a product, from
+  // either stock docs or tagged batch entries — used to build the ledger
+  // and to find "the most recent prior date" per company.
+  function stockBucketsFor(productId) {
+    const map = new Map(); // key `${date} ${companyKey}` -> {date, companyId, companyName}
+    state.stock.filter((s) => s.productId === productId).forEach((s) => {
+      const key = s.date + " " + stockKey(s.companyId);
+      if (!map.has(key)) map.set(key, { date: s.date, companyId: s.companyId || "", companyName: s.companyName || "" });
+    });
+    state.entries.filter((e) => e.productId === productId).forEach((e) => {
+      const companyId = e.jobworkCompanyId || "";
+      const key = e.date + " " + stockKey(companyId);
+      if (!map.has(key)) {
+        const company = companyId ? jobCompanyById(companyId) : null;
+        map.set(key, { date: e.date, companyId, companyName: e.jobworkCompanyName || (company ? company.name : "") });
+      }
+    });
+    return Array.from(map.values());
   }
-  function closingFor(date, productId) {
-    const reg = regularStockRow(date, productId);
-    const opening = reg ? Number(reg.opening) || 0 : 0;
-    const producedMT = producedFor(date, productId) / KG_PER_MT;
-    return opening + producedMT - totalDispatchedFor(date, productId);
+  function dispatchedFor(date, productId, companyId) {
+    const row = stockRowFor(date, productId, companyId);
+    return row ? Number(row.dispatched) || 0 : 0;
+  }
+  function openingFor(date, productId, companyId) {
+    const row = stockRowFor(date, productId, companyId);
+    return row ? Number(row.opening) || 0 : 0;
+  }
+  function closingFor(date, productId, companyId) {
+    const opening = openingFor(date, productId, companyId);
+    const producedMT = producedFor(date, productId, companyId) / KG_PER_MT;
+    return opening + producedMT - dispatchedFor(date, productId, companyId);
   }
 
-  function suggestOpening(productId, date) {
+  function suggestOpening(productId, date, companyId) {
+    const key = stockKey(companyId);
     const priorDate = Array.from(new Set(
-      state.stock.filter((s) => s.productId === productId && s.date < date).map((s) => s.date)
+      stockBucketsFor(productId)
+        .filter((b) => stockKey(b.companyId) === key && b.date < date)
+        .map((b) => b.date)
     )).sort((a, b) => (a < b ? 1 : -1))[0];
     if (!priorDate) return 0;
-    return closingFor(priorDate, productId);
+    return closingFor(priorDate, productId, companyId);
   }
 
   // Returns Kg — the batch entries this is summed from are stored in Kg.
   // Callers on the Stock ledger (MT throughout) divide by KG_PER_MT.
-  function producedFor(date, productId) {
+  // companyId "" means the regular (no job-work company) bucket; a batch
+  // only counts toward a company's Produced when it was tagged to that
+  // exact company on the Log Batch form.
+  function producedFor(date, productId, companyId) {
+    const key = stockKey(companyId);
     return state.entries
-      .filter((e) => e.date === date && e.productId === productId)
+      .filter((e) => e.date === date && e.productId === productId && stockKey(e.jobworkCompanyId) === key)
       .reduce((s, e) => s + (e.outputQty || 0), 0);
   }
 
@@ -1737,26 +1773,13 @@
     const companyId = $("#st-company") ? $("#st-company").value : "";
     if (!productId || !date) return;
     const openingField = $("#st-opening");
-    if (companyId) {
-      // Dispatching to a company is a transaction against the day's
-      // overall stock, not its own opening balance — the regular row
-      // (if any) already carries that.
-      const existing = state.stock.find((s) => s.date === date && s.productId === productId && s.companyId === companyId);
-      $("#st-dispatched").value = existing ? existing.dispatched : "";
-      if (openingField) {
-        openingField.value = "";
-        openingField.disabled = true;
-        openingField.placeholder = "N/A for company dispatch";
-      }
-    } else {
-      const existing = regularStockRow(date, productId);
-      if (openingField) {
-        openingField.disabled = false;
-        openingField.placeholder = "0";
-        openingField.value = existing ? existing.opening : suggestOpening(productId, date);
-      }
-      $("#st-dispatched").value = existing ? existing.dispatched : "";
+    const existing = stockRowFor(date, productId, companyId);
+    if (openingField) {
+      openingField.disabled = false;
+      openingField.placeholder = "0";
+      openingField.value = existing ? existing.opening : suggestOpening(productId, date, companyId);
     }
+    $("#st-dispatched").value = existing ? existing.dispatched : "";
   }
 
   async function submitStock() {
@@ -1764,17 +1787,16 @@
     const date = $("#st-date").value;
     const companyId = $("#st-company") ? $("#st-company").value : "";
     const dispatched = parseFloat($("#st-dispatched").value) || 0;
+    const opening = parseFloat($("#st-opening").value) || 0;
     if (!productId || !date) return toast("Pick a product and date.", "error");
     const docId = date + "_" + productId + (companyId ? "_" + companyId : "");
-    const payload = { date, productId, dispatched, updatedAt: new Date().toISOString() };
+    const payload = { date, productId, dispatched, opening, updatedAt: new Date().toISOString() };
     let companyName = "";
     if (companyId) {
       const company = jobCompanyById(companyId);
       companyName = company ? company.name : companyId;
       payload.companyId = companyId;
       payload.companyName = companyName;
-    } else {
-      payload.opening = parseFloat($("#st-opening").value) || 0;
     }
     try {
       if (state.db) {
@@ -1786,7 +1808,7 @@
       }
       toast(
         "Stock entry saved for " + productName(productId) + " on " + date +
-          (companyId ? " — dispatched to " + companyName : ""),
+          (companyId ? " — " + companyName : ""),
         "success"
       );
       renderStock();
@@ -1800,24 +1822,35 @@
     const body = $("#stock-body");
     body.innerHTML = "";
     const filterCompany = $("#st-filter-company") ? $("#st-filter-company").value : "";
-    let rows = state.stock.slice();
-    if (filterCompany === "__regular__") rows = rows.filter((s) => !s.companyId);
-    else if (filterCompany) rows = rows.filter((s) => s.companyId === filterCompany);
-    rows = rows.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0)).slice(0, 200);
-    if (!rows.length) {
+
+    // Build the full set of (date, product, company) buckets that have
+    // either an explicit Stock doc or batch production tagged to them, so
+    // logging a company-tagged batch shows up here immediately even
+    // before anyone manually enters a Dispatched figure for it.
+    let buckets = [];
+    state.products.forEach((p) => {
+      stockBucketsFor(p.id).forEach((b) => buckets.push({ productId: p.id, date: b.date, companyId: b.companyId, companyName: b.companyName }));
+    });
+
+    if (filterCompany === "__regular__") buckets = buckets.filter((b) => !b.companyId);
+    else if (filterCompany) buckets = buckets.filter((b) => b.companyId === filterCompany);
+    buckets = buckets.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0)).slice(0, 200);
+    if (!buckets.length) {
       body.appendChild(el("tr", {}, [el("td", { colspan: "7", class: "empty-hint" }, ["No stock entries yet."])]));
       return;
     }
-    rows.forEach((s) => {
-      const producedMT = producedFor(s.date, s.productId) / KG_PER_MT;
-      const closing = closingFor(s.date, s.productId);
+    buckets.forEach((b) => {
+      const opening = openingFor(b.date, b.productId, b.companyId);
+      const producedMT = producedFor(b.date, b.productId, b.companyId) / KG_PER_MT;
+      const dispatched = dispatchedFor(b.date, b.productId, b.companyId);
+      const closing = closingFor(b.date, b.productId, b.companyId);
       body.appendChild(el("tr", {}, [
-        el("td", {}, [s.date]),
-        el("td", {}, [productName(s.productId)]),
-        el("td", {}, [s.companyId ? (s.companyName || s.companyId) : "—"]),
-        el("td", { class: "num" }, [s.companyId ? "—" : fmtNum(s.opening, 2)]),
+        el("td", {}, [b.date]),
+        el("td", {}, [productName(b.productId)]),
+        el("td", {}, [b.companyId ? (b.companyName || b.companyId) : "—"]),
+        el("td", { class: "num" }, [fmtNum(opening, 2)]),
         el("td", { class: "num" }, [fmtNum(producedMT, 2)]),
-        el("td", { class: "num" }, [fmtNum(s.dispatched, 2)]),
+        el("td", { class: "num" }, [fmtNum(dispatched, 2)]),
         el("td", { class: "num strong" }, [fmtNum(closing, 2)]),
       ]));
     });
