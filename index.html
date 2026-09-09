@@ -112,6 +112,10 @@
             <label for="f-jobwork-company">Job work for (optional)</label>
             <select id="f-jobwork-company"></select>
             <div class="rate-readout" id="f-jobwork-rate-display" hidden>Rate: &#8212;</div>
+            <div class="field" id="f-jobwork-rate-input-wrap" hidden style="margin-top:8px; max-width:260px;">
+              <label for="f-jobwork-rate-input">Rate agreed for this order (&#8377;/MT)</label>
+              <input type="number" min="0" step="any" id="f-jobwork-rate-input" placeholder="Enter the rate for this order" />
+            </div>
           </div>
         </div>
 
@@ -349,7 +353,7 @@
       </div>
       <div class="table-wrap max-scroll">
         <table>
-          <thead><tr><th>Company</th><th>Product</th><th>Notes</th><th>Linked Log Batch product</th><th class="num">Rate (&#8377;/MT)</th></tr></thead>
+          <thead><tr><th>Company</th><th>Rate type</th><th>Product</th><th>Notes</th><th>Linked Log Batch product</th><th class="num">Rate (&#8377;/MT)</th></tr></thead>
           <tbody id="jw-companies-body"></tbody>
         </table>
       </div>
@@ -665,6 +669,6 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
-<script src="app.js?v=20"></script>
+<script src="app.js?v=21"></script>
 </body>
 </html>

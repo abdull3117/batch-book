@@ -253,6 +253,16 @@
     if (!c || !productId) return null;
     return (c.products || []).find((p) => p.productId === productId) || null;
   }
+  // Some job-work companies (e.g. EMR Fertilizers, EMR Agro Industries)
+  // don't have one fixed ₹/MT rate at all — the sales team agrees a rate
+  // with the customer per order, based on the raw material and quality
+  // that specific order needs. For those, the Log Batch form skips the
+  // company's rate table entirely and lets the rate be typed in for that
+  // one batch instead (see updateJobworkLiveSummary/submitEntry below).
+  function companyHasVariableRate(companyId) {
+    const c = jobCompanyById(companyId);
+    return !!(c && c.variableRate);
+  }
   function toast(msg, kind) {
     const host = $("#toast-host");
     const t = el("div", { class: "toast " + (kind || "") }, [msg]);
@@ -494,16 +504,22 @@
   async function saveJobRates() {
     const rateInputs = $all(".jw-rate-input");
     const linkSelects = $all(".jw-link-select");
-    const updated = state.jobworkCompanies.map((c) => Object.assign({}, c, {
-      products: (c.products || []).map((p) => {
-        const rateInp = rateInputs.find((i) => i.dataset.companyId === c.id && i.dataset.productId === p.id);
-        const linkSel = linkSelects.find((i) => i.dataset.companyId === c.id && i.dataset.productId === p.id);
-        const next = Object.assign({}, p);
-        if (rateInp) next.ratePerMT = Number(rateInp.value) || 0;
-        if (linkSel) { next.productId = linkSel.value || ""; if (next.productId) next.name = productName(next.productId); }
-        return next;
-      }),
-    }));
+    const variableRateBoxes = $all(".jw-variable-rate-checkbox");
+    const updated = state.jobworkCompanies.map((c) => {
+      const box = variableRateBoxes.find((i) => i.dataset.companyId === c.id);
+      const next = Object.assign({}, c, {
+        products: (c.products || []).map((p) => {
+          const rateInp = rateInputs.find((i) => i.dataset.companyId === c.id && i.dataset.productId === p.id);
+          const linkSel = linkSelects.find((i) => i.dataset.companyId === c.id && i.dataset.productId === p.id);
+          const nextP = Object.assign({}, p);
+          if (rateInp) nextP.ratePerMT = Number(rateInp.value) || 0;
+          if (linkSel) { nextP.productId = linkSel.value || ""; if (nextP.productId) nextP.name = productName(nextP.productId); }
+          return nextP;
+        }),
+      });
+      if (box) next.variableRate = !!box.checked;
+      return next;
+    });
     await saveJobworkCompanies(updated);
     toast("Job work rates & linked products saved.", "success");
     renderJobCompanies();
@@ -525,13 +541,32 @@
     return sel;
   }
 
+  // Rate-type checkbox shown once per company (first row only) — see
+  // companyHasVariableRate() above. Checking it means this company's
+  // rate isn't fixed at all: sales agrees a price with the customer
+  // per order (based on the raw material/quality that order needs), so
+  // the Log Batch form skips this table and asks for the rate on each
+  // batch instead. Read back and saved by saveJobRates().
+  function buildVariableRateToggle(company) {
+    const isTeam = state.role === "team";
+    if (isTeam) return company.variableRate ? "Rate varies per order" : "Fixed rate";
+    const wrap = el("label", { style: "display:inline-flex; align-items:center; gap:4px; font-size:.82rem; white-space:nowrap; cursor:pointer;" });
+    const box = el("input", {
+      type: "checkbox", class: "jw-variable-rate-checkbox", "data-company-id": company.id,
+    });
+    box.checked = !!company.variableRate;
+    wrap.appendChild(box);
+    wrap.appendChild(document.createTextNode(" Rate varies per order"));
+    return wrap;
+  }
+
   function renderJobCompanies() {
     const body = $("#jw-companies-body");
     if (!body) return;
     body.innerHTML = "";
     const isTeam = state.role === "team";
     if (!state.jobworkCompanies.length) {
-      body.appendChild(el("tr", {}, [el("td", { colspan: "5", class: "empty-hint" }, ["No job work companies added yet."])]));
+      body.appendChild(el("tr", {}, [el("td", { colspan: "6", class: "empty-hint" }, ["No job work companies added yet."])]));
       return;
     }
     state.jobworkCompanies.forEach((c) => {
@@ -539,7 +574,8 @@
       if (!products.length) {
         body.appendChild(el("tr", {}, [
           el("td", {}, [c.name]),
-          el("td", { class: "empty-hint" }, ["No rates added yet"]),
+          el("td", {}, [buildVariableRateToggle(c)]),
+          el("td", { class: "empty-hint" }, [c.variableRate ? "Rate entered per batch — no table needed" : "No rates added yet"]),
           el("td", {}, [""]),
           el("td", {}, [""]),
           el("td", { class: "num" }, [""]),
@@ -550,6 +586,7 @@
         const linked = !!p.productId;
         body.appendChild(el("tr", {}, [
           el("td", {}, [idx === 0 ? c.name : ""]),
+          el("td", {}, [idx === 0 ? buildVariableRateToggle(c) : ""]),
           el("td", {}, [linked ? productName(p.productId) : (p.name + " ⚠")]),
           el("td", { style: "max-width:220px; white-space:normal; color:var(--text-faint); font-size:.78rem;" }, [p.note || ""]),
           el("td", {}, [
@@ -1056,17 +1093,40 @@
   function updateJobworkLiveSummary(outputQty, c) {
     const companySel = $("#f-jobwork-company");
     const rateDisplay = $("#f-jobwork-rate-display");
+    const rateInputWrap = $("#f-jobwork-rate-input-wrap");
     const revenueRow = $("#f-jw-revenue-row");
     const profitBox = $("#f-jw-profit-box");
     const noRateHint = $("#f-jw-no-rate-hint");
     const companyId = companySel ? companySel.value : "";
     if (!companyId) {
       if (rateDisplay) rateDisplay.hidden = true;
+      if (rateInputWrap) rateInputWrap.hidden = true;
       if (revenueRow) revenueRow.hidden = true;
       if (profitBox) profitBox.hidden = true;
       if (noRateHint) noRateHint.hidden = true;
       return;
     }
+    if (companyHasVariableRate(companyId)) {
+      // No fixed rate to look up — the rate box takes over from the
+      // read-only display, and revenue/profit follow whatever's typed
+      // in there for this specific order.
+      if (rateDisplay) rateDisplay.hidden = true;
+      if (noRateHint) noRateHint.hidden = true;
+      if (rateInputWrap) rateInputWrap.hidden = false;
+      const rateInp = $("#f-jobwork-rate-input");
+      const rate = rateInp ? Number(rateInp.value) || 0 : 0;
+      const revenue = (outputQty / KG_PER_MT) * rate;
+      const profit = revenue - c.totalCost;
+      if (revenueRow) { revenueRow.hidden = false; $("#sum-jw-revenue").textContent = fmtINR(revenue); }
+      if (profitBox) {
+        profitBox.hidden = false;
+        $("#sum-jw-profit").textContent = (profit < 0 ? "-" : "") + fmtINR(Math.abs(profit));
+        profitBox.classList.remove("pl-positive", "pl-negative");
+        profitBox.classList.add(profit < 0 ? "pl-negative" : "pl-positive");
+      }
+      return;
+    }
+    if (rateInputWrap) rateInputWrap.hidden = true;
     const productId = $("#f-product").value;
     const jr = jobRateFor(companyId, productId);
     if (!jr) {
@@ -1116,6 +1176,12 @@
     // and its labour/processing cost overrides (if any) are looked up by
     // this same company id inside computeCosts().
     const jobworkCompanyId = $("#f-jobwork-company") ? $("#f-jobwork-company").value : "";
+    const variableRate = jobworkCompanyId && companyHasVariableRate(jobworkCompanyId);
+    if (variableRate) {
+      const rateInp = $("#f-jobwork-rate-input");
+      const enteredRate = rateInp ? Number(rateInp.value) || 0 : 0;
+      if (enteredRate <= 0) return toast("Enter the rate agreed for this order first.", "error");
+    }
     const c = computeCosts(mats, outputQty, operators, loadmen, productId, jobworkCompanyId);
     const editingId = state.editingEntryId;
     const existing = editingId ? state.entries.find((e) => e.id === editingId) : null;
@@ -1132,17 +1198,26 @@
 
     if (jobworkCompanyId) {
       const company = jobCompanyById(jobworkCompanyId);
-      const jr = jobRateFor(jobworkCompanyId, productId);
       payload.jobworkCompanyId = jobworkCompanyId;
       payload.jobworkCompanyName = company ? company.name : jobworkCompanyId;
-      if (jr) {
-        payload.jobworkRatePerMT = jr.ratePerMT;
-        payload.jobworkRevenue = (outputQty / KG_PER_MT) * jr.ratePerMT;
+      if (variableRate) {
+        const rateInp = $("#f-jobwork-rate-input");
+        const enteredRate = rateInp ? Number(rateInp.value) || 0 : 0;
+        payload.jobworkRatePerMT = enteredRate;
+        payload.jobworkRateIsManual = true;
+        payload.jobworkRevenue = (outputQty / KG_PER_MT) * enteredRate;
         payload.jobworkProfit = payload.jobworkRevenue - c.totalCost;
       } else {
-        payload.jobworkRatePerMT = null;
-        payload.jobworkRevenue = 0;
-        payload.jobworkProfit = -c.totalCost;
+        const jr = jobRateFor(jobworkCompanyId, productId);
+        if (jr) {
+          payload.jobworkRatePerMT = jr.ratePerMT;
+          payload.jobworkRevenue = (outputQty / KG_PER_MT) * jr.ratePerMT;
+          payload.jobworkProfit = payload.jobworkRevenue - c.totalCost;
+        } else {
+          payload.jobworkRatePerMT = null;
+          payload.jobworkRevenue = 0;
+          payload.jobworkProfit = -c.totalCost;
+        }
       }
     }
 
@@ -1198,6 +1273,7 @@
     $("#f-loadmen").value = "";
     $("#f-remarks").value = "";
     if ($("#f-jobwork-company")) $("#f-jobwork-company").value = "";
+    if ($("#f-jobwork-rate-input")) $("#f-jobwork-rate-input").value = "";
     $all(".mat-input").forEach((i) => (i.value = ""));
     if (keepDate) $("#f-date").value = keepDate;
     updateLiveSummary();
@@ -1292,6 +1368,9 @@
     $("#f-loadmen").value = entry.loadmen || "";
     $("#f-remarks").value = opts.keepRemarks ? (entry.remarks || "") : "";
     if ($("#f-jobwork-company")) $("#f-jobwork-company").value = entry.jobworkCompanyId || "";
+    if ($("#f-jobwork-rate-input")) {
+      $("#f-jobwork-rate-input").value = entry.jobworkRateIsManual && entry.jobworkRatePerMT ? entry.jobworkRatePerMT : "";
+    }
     const mats = entry.materials || {};
     $all(".mat-input").forEach((inp) => {
       const v = mats[inp.dataset.mat];
