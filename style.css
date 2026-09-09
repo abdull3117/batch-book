@@ -254,6 +254,7 @@ button, input, select, textarea { font-family: inherit; font-size: inherit; colo
 /* ---------- Summary panel ---------- */
 .summary-card { position: sticky; top: 88px; border-color: var(--purple-soft); }
 .summary-row { display: flex; justify-content: space-between; align-items: baseline; padding: 8px 0; border-bottom: 2px dashed var(--border); }
+.summary-row[hidden], .summary-cpk[hidden] { display: none; }
 .summary-row:last-of-type { border-bottom: none; }
 .summary-row .k { color: var(--text-muted); font-size: .84rem; font-weight: 600; }
 .summary-row .v { font-family: var(--font-mono); font-weight: 700; }
