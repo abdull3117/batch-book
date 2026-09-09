@@ -91,6 +91,17 @@
   // convert at the boundary: 1 MT = 1000 Kg.
   const KG_PER_MT = 1000;
 
+  // The "Output produced" field on the entry form lets a supervisor pick
+  // whichever unit they're measuring in (Kg, Litre or Metric Tonne) and
+  // converts it to the Kg-equivalent that's actually stored/costed.
+  // Kg<->MT is an exact conversion; Litre has no universal density, so
+  // it's treated 1:1 with Kg (best-effort, same as other unit fields in
+  // this app which don't do cross-unit density conversion either).
+  function outputToKg(value, unit) {
+    const v = Number(value) || 0;
+    return unit === "Metric Tonne" ? v * KG_PER_MT : v;
+  }
+
   // Google Sheets sync — Apps Script Web App URL. Every saved batch is
   // also pushed here as a row, so there's always a live spreadsheet
   // copy of all entries. Firestore (above) remains the source of truth
@@ -576,10 +587,11 @@
   }
 
   function updateLiveSummary() {
-    // The form collects output in MT (matching Stock/Reports elsewhere);
-    // convert to Kg here since costing (rmCost, costPerKg) stays Kg-based.
-    const outputMT = parseFloat($("#f-output").value) || 0;
-    const outputQty = outputMT * KG_PER_MT;
+    // The form collects output in whichever unit is picked; convert to
+    // Kg-equivalent here since costing (rmCost, costPerKg) stays Kg-based.
+    const outputVal = parseFloat($("#f-output").value) || 0;
+    const outputUnit = $("#f-output-unit").value;
+    const outputQty = outputToKg(outputVal, outputUnit);
     const operators = parseFloat($("#f-operators").value) || 0;
     const loadmen = parseFloat($("#f-loadmen").value) || 0;
     const mats = getFormMaterialsQty();
@@ -596,9 +608,11 @@
   async function submitEntry() {
     const date = $("#f-date").value;
     const productId = $("#f-product").value;
-    // Entered in MT on the form; stored (and costed) in Kg as before.
-    const outputMT = parseFloat($("#f-output").value) || 0;
-    const outputQty = outputMT * KG_PER_MT;
+    // Entered in whichever unit is picked on the form; stored (and
+    // costed) as a Kg-equivalent, as before.
+    const outputVal = parseFloat($("#f-output").value) || 0;
+    const outputUnit = $("#f-output-unit").value;
+    const outputQty = outputToKg(outputVal, outputUnit);
     const operators = parseFloat($("#f-operators").value) || 0;
     const loadmen = parseFloat($("#f-loadmen").value) || 0;
     const remarks = $("#f-remarks").value.trim();
@@ -607,7 +621,7 @@
     if (!date) return toast("Pick a date first.", "error");
     if (!productId) return toast("Pick a product first.", "error");
     if (productId === "__other__") return toast("Finish adding the new product first.", "error");
-    if (outputMT <= 0) return toast("Enter the output quantity produced.", "error");
+    if (outputVal <= 0) return toast("Enter the output quantity produced.", "error");
     if (Object.keys(mats).length === 0) return toast("Enter at least one raw material quantity.", "error");
 
     const c = computeCosts(mats, outputQty, operators, loadmen);
@@ -625,7 +639,8 @@
       if (state.db) {
         const ref = await state.db.collection("entries").add(payload);
         syncEntryToSheet(ref.id, payload);
-        toast("Batch saved — " + productName(productId) + ", " + fmtNum(outputMT, 2) + " MT. Ready for the next batch.", "success");
+        const unitLabel = outputUnit === "Metric Tonne" ? "MT" : outputUnit;
+        toast("Batch saved — " + productName(productId) + ", " + fmtNum(outputVal, 2) + " " + unitLabel + ". Ready for the next batch.", "success");
       } else {
         payload.id = "local_" + Date.now();
         state.entries.unshift(payload);
@@ -708,8 +723,10 @@
   function fillFormFromEntry(entry) {
     if (!entry) return;
     $("#f-product").value = entry.productId || "";
-    // entry.outputQty is stored in Kg; the form collects MT.
+    // entry.outputQty is stored in Kg; refill the form in MT (and reset
+    // the unit picker to MT so the displayed number matches the label).
     $("#f-output").value = entry.outputQty ? entry.outputQty / KG_PER_MT : "";
+    if ($("#f-output-unit")) $("#f-output-unit").value = "Metric Tonne";
     $("#f-operators").value = entry.operators || "";
     $("#f-loadmen").value = entry.loadmen || "";
     $("#f-remarks").value = "";

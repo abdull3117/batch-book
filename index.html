@@ -90,8 +90,15 @@
             </div>
           </div>
           <div class="field">
-            <label for="f-output">Output produced (MT)</label>
-            <input type="number" min="0" step="any" inputmode="decimal" id="f-output" placeholder="0" />
+            <label for="f-output">Output produced</label>
+            <div style="display:flex; gap:6px;">
+              <input type="number" min="0" step="any" inputmode="decimal" id="f-output" placeholder="0" style="flex:1; min-width:0;" />
+              <select id="f-output-unit" class="unit-select" style="max-width:100px;">
+                <option value="Kg">Kg</option>
+                <option value="Litre">Litre</option>
+                <option value="Metric Tonne" selected>MT</option>
+              </select>
+            </div>
           </div>
         </div>
 
@@ -440,6 +447,6 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
-<script src="app.js?v=4"></script>
+<script src="app.js?v=5"></script>
 </body>
 </html>
