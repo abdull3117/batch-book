@@ -57,6 +57,9 @@
 
   const DEFAULT_LABOUR = { operatorRate: 600, loadmanRate: 500, processingCost: 2000 };
 
+  // Units offered everywhere a material or product's unit is picked.
+  const UNIT_OPTIONS = ["Kg", "Litre", "Metric Tonne"];
+
   // Google Sheets sync — Apps Script Web App URL. Every saved batch is
   // also pushed here as a row, so there's always a live spreadsheet
   // copy of all entries. Firestore (above) remains the source of truth
@@ -154,6 +157,46 @@
   // ---------------------------------------------------------------
   function slugify(name) {
     return name.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+  }
+
+  // Builds a unit <select> pre-set to `current`. If `current` isn't one of
+  // the standard options (older/custom data) it's added as an extra option
+  // so the real stored value is never silently swapped out from under it.
+  function buildUnitSelect(current, className, onChange) {
+    const opts = UNIT_OPTIONS.slice();
+    if (current && opts.indexOf(current) === -1) opts.unshift(current);
+    const sel = el(
+      "select",
+      { class: className, onchange: (e) => onChange(e.target.value) },
+      opts.map((u) => el("option", { value: u }, [u]))
+    );
+    sel.value = current || "Kg";
+    return sel;
+  }
+
+  async function updateMaterialUnit(idx, unit) {
+    const item = state.materials[idx];
+    if (!item) return;
+    state.materials = state.materials.map((m, i) => (i === idx ? Object.assign({}, m, { unit }) : m));
+    try {
+      if (state.db) await state.db.doc("settings/materials").set({ items: state.materials });
+      toast("Unit for \"" + item.name + "\" set to " + unit + ".", "success");
+    } catch (e) {
+      toast("Could not save unit: " + e.message, "error");
+    }
+    rebuildMaterialGrid();
+  }
+
+  async function updateProductUnit(idx, unit) {
+    const item = state.products[idx];
+    if (!item) return;
+    state.products = state.products.map((p, i) => (i === idx ? Object.assign({}, p, { unit }) : p));
+    try {
+      if (state.db) await state.db.doc("settings/products").set({ items: state.products });
+      toast("Unit for \"" + item.name + "\" set to " + unit + ".", "success");
+    } catch (e) {
+      toast("Could not save unit: " + e.message, "error");
+    }
   }
 
   async function addMaterial(name, unit, rate) {
@@ -830,7 +873,7 @@
     state.materials.forEach((m, idx) => {
       body.appendChild(el("tr", {}, [
         el("td", {}, [m.name]),
-        el("td", {}, [m.unit]),
+        el("td", {}, [buildUnitSelect(m.unit, "row-unit-select", (unit) => updateMaterialUnit(idx, unit))]),
         el("td", {}, [
           el("input", {
             type: "number", min: "0", step: "any", class: "rate-input", "data-idx": idx,
@@ -845,8 +888,11 @@
     const body = $("#settings-products-body");
     if (!body) return;
     body.innerHTML = "";
-    state.products.forEach((p) => {
-      body.appendChild(el("tr", {}, [el("td", {}, [p.name]), el("td", {}, [p.unit])]));
+    state.products.forEach((p, idx) => {
+      body.appendChild(el("tr", {}, [
+        el("td", {}, [p.name]),
+        el("td", {}, [buildUnitSelect(p.unit, "row-unit-select", (unit) => updateProductUnit(idx, unit))]),
+      ]));
     });
   }
 
@@ -914,9 +960,10 @@
       if (isOther) $("#new-prod-name-inline").focus();
     });
     $("#btn-confirm-add-product-inline").addEventListener("click", async () => {
-      const item = await addProduct($("#new-prod-name-inline").value, "Kg");
+      const item = await addProduct($("#new-prod-name-inline").value, $("#new-prod-unit-inline").value);
       if (item) {
         $("#new-prod-name-inline").value = "";
+        $("#new-prod-unit-inline").value = "Kg";
         $("#add-product-inline").hidden = true;
         $("#f-product").value = item.id;
         updateLiveSummary();
@@ -924,6 +971,7 @@
     });
     $("#btn-cancel-add-product-inline").addEventListener("click", () => {
       $("#new-prod-name-inline").value = "";
+      $("#new-prod-unit-inline").value = "Kg";
       $("#add-product-inline").hidden = true;
       $("#f-product").value = "";
     });

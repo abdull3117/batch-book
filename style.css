@@ -280,11 +280,19 @@ td.strong { font-weight: 700; }
   margin-top: 12px; padding: 10px; background: var(--surface-2); border-radius: var(--radius-sm);
 }
 .inline-add-row { margin: 8px 0 0; }
-.add-item-row input, .inline-add-row input {
+.add-item-row input, .inline-add-row input, .add-item-row select, .inline-add-row select {
   background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
   padding: 7px 9px; flex: 1; min-width: 110px; color: var(--text);
 }
-.add-item-row input:focus, .inline-add-row input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.add-item-row input:focus, .inline-add-row input:focus, .add-item-row select:focus, .inline-add-row select:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.unit-select { max-width: 130px; flex: 0 0 auto; cursor: pointer; }
+
+/* ---------- Settings tables: inline unit select per row ---------- */
+.row-unit-select {
+  background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
+  padding: 5px 7px; color: var(--text); cursor: pointer; min-width: 108px;
+}
+.row-unit-select:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 
 /* ---------- Reports download row ---------- */
 .card-title-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }

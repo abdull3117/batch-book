@@ -57,6 +57,11 @@
             <select id="f-product" class="product-select"></select>
             <div class="inline-add-row" id="add-product-inline" hidden>
               <input type="text" id="new-prod-name-inline" placeholder="New product name" />
+              <select id="new-prod-unit-inline" class="unit-select">
+                <option value="Kg">Kg</option>
+                <option value="Litre">Litre</option>
+                <option value="Metric Tonne">Metric Tonne</option>
+              </select>
               <button type="button" class="btn btn-primary btn-small" id="btn-confirm-add-product-inline">Add</button>
               <button type="button" class="btn btn-secondary btn-small" id="btn-cancel-add-product-inline">Cancel</button>
             </div>
@@ -75,7 +80,11 @@
         </div>
         <div class="inline-add-row" id="add-material-inline" hidden>
           <input type="text" id="new-mat-name-inline" placeholder="Material name" />
-          <input type="text" id="new-mat-unit-inline" placeholder="Unit" value="Kg" style="max-width:90px;" />
+          <select id="new-mat-unit-inline" class="unit-select">
+            <option value="Kg">Kg</option>
+            <option value="Litre">Litre</option>
+            <option value="Metric Tonne">Metric Tonne</option>
+          </select>
           <input type="number" id="new-mat-rate-inline" placeholder="Rate &#8377;/unit" min="0" step="any" style="max-width:120px;" />
           <button type="button" class="btn btn-primary btn-small" id="btn-confirm-add-material-inline">Add</button>
           <button type="button" class="btn btn-secondary btn-small" id="btn-cancel-add-material-inline">Cancel</button>
@@ -267,9 +276,14 @@
             <tbody id="settings-materials-body"></tbody>
           </table>
         </div>
+        <p class="hint" style="margin-top:8px;">Change a material's unit anytime &mdash; it saves right away.</p>
         <div class="add-item-row" id="add-material-row" hidden>
           <input type="text" id="new-mat-name" placeholder="Material name" />
-          <input type="text" id="new-mat-unit" placeholder="Unit" value="Kg" style="max-width:90px;" />
+          <select id="new-mat-unit" class="unit-select">
+            <option value="Kg">Kg</option>
+            <option value="Litre">Litre</option>
+            <option value="Metric Tonne">Metric Tonne</option>
+          </select>
           <input type="number" id="new-mat-rate" placeholder="Rate &#8377;/unit" min="0" step="any" style="max-width:120px;" />
           <button class="btn btn-primary btn-small" id="btn-confirm-add-material">Add</button>
           <button class="btn btn-secondary btn-small" id="btn-cancel-add-material">Cancel</button>
@@ -308,9 +322,14 @@
               <tbody id="settings-products-body"></tbody>
             </table>
           </div>
+          <p class="hint" style="margin-top:8px;">Change a product's unit anytime &mdash; it saves right away.</p>
           <div class="add-item-row" id="add-product-row" hidden>
             <input type="text" id="new-prod-name" placeholder="Product name" />
-            <input type="text" id="new-prod-unit" placeholder="Unit" value="Kg" style="max-width:90px;" />
+            <select id="new-prod-unit" class="unit-select">
+              <option value="Kg">Kg</option>
+              <option value="Litre">Litre</option>
+              <option value="Metric Tonne">Metric Tonne</option>
+            </select>
             <button class="btn btn-primary btn-small" id="btn-confirm-add-product">Add</button>
             <button class="btn btn-secondary btn-small" id="btn-cancel-add-product">Cancel</button>
           </div>
