@@ -127,7 +127,7 @@
   };
   const ROLE_STORAGE_KEY = "bb_role";
   // Tabs a "team" role cannot see — they show costs, rates and wages.
-  const ADMIN_ONLY_TABS = ["reports", "settings"];
+  const ADMIN_ONLY_TABS = ["settings"];
 
   async function sha256Hex(str) {
     const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(str));
@@ -496,8 +496,9 @@
     $("#lock-password").focus();
   }
 
-  // Applies role-based visibility: team members can log batches and see
-  // stock quantities, but not costs, rates, wages or Reports.
+  // Applies role-based visibility: team members can log batches, see
+  // stock quantities, and view full Reports (including costs); only
+  // Settings (rates, wages, access control) stays admin-only.
   function applyRole(role) {
     state.role = role;
     $("#lock-screen").hidden = true;
@@ -513,9 +514,7 @@
     if (logoutBtn) logoutBtn.hidden = false;
 
     const isTeam = role === "team";
-    const reportsTab = $("#tab-btn-reports");
     const settingsTab = $("#tab-btn-settings");
-    if (reportsTab) reportsTab.hidden = isTeam;
     if (settingsTab) settingsTab.hidden = isTeam;
     const costBlock = $("#cost-details-block");
     if (costBlock) costBlock.hidden = isTeam;
@@ -899,7 +898,7 @@
       body.appendChild(el("div", { class: "view-row" }, [el("span", { class: "k" }, [entry.remarks])]));
     }
 
-    if (state.role !== "team") {
+    {
       body.appendChild(el("div", { class: "view-section-title" }, ["Cost"]));
       [
         ["Raw material cost", fmtINR(entry.rmCost)],
