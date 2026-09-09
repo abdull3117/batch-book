@@ -6,7 +6,11 @@
      entries/<id>         { date, productId, outputQty, materials:{id:qty}, operators, loadmen,
                              remarks, rmCost, processingCost, labourCost, totalCost, costPerKg, createdAt }
      stock/<date_productId> { date, productId, opening, dispatched, updatedAt }
-     settings/jobwork     { companies: [{id,name,products:[{id,name,ratePerMT,note}]}] }
+     settings/jobwork     { companies: [{id,name,products:[{id,name,ratePerMT,note,productId}]}] }
+                           — productId (optional) links a job-work product to a regular Log
+                           Batch product (settings/products), so its raw materials & output
+                           can be pulled straight from an entries/<id> doc for the same date
+                           instead of being typed twice.
      jobwork_entries/<id> { date, companyId, companyName, productId, productName, ratePerMT,
                              outputQty, materials:{id:qty}, operators, loadmen, remarks,
                              rmCost, processingCost, labourCost, actualCost, revenue, profit, createdAt }
@@ -85,20 +89,20 @@
     {
       id: "co_sfl", name: "Silverline Fertilizers Ltd (SFL)",
       products: [
-        { id: "sfl_jobwork_mix", name: "Job Work Mix", ratePerMT: 3950, note: "Rock Phosphate ~70%, remaining 30% combination of other materials (reference only — enter actual quantities used)" },
-        { id: "sfl_cms", name: "CMS", ratePerMT: 3950, note: "" },
+        { id: "sfl_jobwork_mix", name: "Job Work Mix", ratePerMT: 3950, note: "Rock Phosphate ~70%, remaining 30% combination of other materials (reference only — enter actual quantities used)", productId: "" },
+        { id: "sfl_cms", name: "CMS", ratePerMT: 3950, note: "", productId: "p_cms" },
       ],
     },
     {
       id: "co_rajshree", name: "Rajshree Bio Solutions",
       products: [
-        { id: "rajshree_pdm", name: "PDM Granules", ratePerMT: 4250, note: "" },
+        { id: "rajshree_pdm", name: "PDM Granules", ratePerMT: 4250, note: "", productId: "p_pdm" },
       ],
     },
     {
       id: "co_skywin", name: "SKY WIN Biotech",
       products: [
-        { id: "skywin_jobwork", name: "Job Work", ratePerMT: 6300, note: "" },
+        { id: "skywin_jobwork", name: "Job Work", ratePerMT: 6300, note: "", productId: "" },
       ],
     },
   ];
@@ -399,7 +403,7 @@
     return item;
   }
 
-  async function addJobProduct(companyId, name, rate, note) {
+  async function addJobProduct(companyId, name, rate, note, productId) {
     name = (name || "").trim();
     const company = jobCompanyById(companyId);
     if (!company) { toast("Pick a company first.", "error"); return null; }
@@ -411,6 +415,7 @@
     const item = {
       id: "jwp_" + slugify(name) + "_" + Date.now().toString(36),
       name, ratePerMT: Number(rate) || 0, note: (note || "").trim(),
+      productId: productId || "",
     };
     const updated = state.jobworkCompanies.map((c) =>
       c.id === companyId ? Object.assign({}, c, { products: (c.products || []).concat([item]) }) : c
@@ -422,20 +427,41 @@
     return item;
   }
 
-  // Reads every rate input currently on screen and saves them all in one go
-  // — used when a client's job-work price changes.
+  // Reads every rate input and linked-product select currently on screen
+  // and saves them all in one go — used when a client's job-work price
+  // changes, or to link/relink a job-work product to the Log Batch
+  // product whose entries should auto-fill its raw materials & output.
   async function saveJobRates() {
-    const inputs = $all(".jw-rate-input");
+    const rateInputs = $all(".jw-rate-input");
+    const linkSelects = $all(".jw-link-select");
     const updated = state.jobworkCompanies.map((c) => Object.assign({}, c, {
       products: (c.products || []).map((p) => {
-        const inp = inputs.find((i) => i.dataset.companyId === c.id && i.dataset.productId === p.id);
-        return inp ? Object.assign({}, p, { ratePerMT: Number(inp.value) || 0 }) : p;
+        const rateInp = rateInputs.find((i) => i.dataset.companyId === c.id && i.dataset.productId === p.id);
+        const linkSel = linkSelects.find((i) => i.dataset.companyId === c.id && i.dataset.productId === p.id);
+        const next = Object.assign({}, p);
+        if (rateInp) next.ratePerMT = Number(rateInp.value) || 0;
+        if (linkSel) next.productId = linkSel.value || "";
+        return next;
       }),
     }));
     await saveJobworkCompanies(updated);
-    toast("Job work rates saved.", "success");
+    toast("Job work rates & linked products saved.", "success");
     renderJobCompanies();
     updateJobLiveSummary();
+    populateJobSourceBatchSelect();
+  }
+
+  // Dropdown offered per job-work product (admin only) to link it to a
+  // regular Log Batch product — see populateJobSourceBatchSelect() below.
+  function buildJobLinkSelect(companyId, p) {
+    const sel = el("select", {
+      class: "jw-link-select", "data-company-id": companyId, "data-product-id": p.id,
+      style: "min-width:170px;",
+    });
+    sel.appendChild(el("option", { value: "" }, ["— Manual entry —"]));
+    state.products.forEach((prod) => sel.appendChild(el("option", { value: prod.id }, [prod.name])));
+    sel.value = p.productId || "";
+    return sel;
   }
 
   function renderJobCompanies() {
@@ -444,7 +470,7 @@
     body.innerHTML = "";
     const isTeam = state.role === "team";
     if (!state.jobworkCompanies.length) {
-      body.appendChild(el("tr", {}, [el("td", { colspan: "4", class: "empty-hint" }, ["No job work companies added yet."])]));
+      body.appendChild(el("tr", {}, [el("td", { colspan: "5", class: "empty-hint" }, ["No job work companies added yet."])]));
       return;
     }
     state.jobworkCompanies.forEach((c) => {
@@ -454,6 +480,7 @@
           el("td", {}, [c.name]),
           el("td", { class: "empty-hint" }, ["No products added yet"]),
           el("td", {}, [""]),
+          el("td", {}, [""]),
           el("td", { class: "num" }, [""]),
         ]));
         return;
@@ -462,7 +489,12 @@
         body.appendChild(el("tr", {}, [
           el("td", {}, [idx === 0 ? c.name : ""]),
           el("td", {}, [p.name]),
-          el("td", { style: "max-width:260px; white-space:normal; color:var(--text-faint); font-size:.78rem;" }, [p.note || ""]),
+          el("td", { style: "max-width:220px; white-space:normal; color:var(--text-faint); font-size:.78rem;" }, [p.note || ""]),
+          el("td", {}, [
+            isTeam
+              ? (p.productId ? productName(p.productId) : "— manual entry —")
+              : buildJobLinkSelect(c.id, p),
+          ]),
           el("td", { class: "num" }, [
             isTeam
               ? fmtINR(p.ratePerMT)
@@ -606,6 +638,7 @@
         renderTodayList();
         renderReports();
         renderStock();
+        populateJobSourceBatchSelect();
       },
       (e) => { toast("Sync error loading entries: " + e.message, "error"); }
     );
@@ -771,6 +804,7 @@
     });
     populateStockProductSelect();
     populateReportProductFilter();
+    populateJobProductLinkSelect();
   }
 
   function getFormMaterialsQty() {
@@ -1172,16 +1206,34 @@
     productSel.innerHTML = "";
     productSel.appendChild(el("option", { value: "" }, ["Select product…"]));
     (company ? company.products || [] : []).forEach((p) => {
-      productSel.appendChild(el("option", { value: p.id }, [p.name + " — " + fmtINR(p.ratePerMT) + "/MT"]));
+      productSel.appendChild(el("option", { value: p.id }, [p.name]));
     });
     if (current) productSel.value = current;
     updateJobProductNote();
   }
 
+  // Options for the "+ Add product" inline form's "link to a Log Batch
+  // product" picker — kept in sync whenever the regular product list
+  // changes (see populateProductSelects()).
+  function populateJobProductLinkSelect() {
+    const sel = $("#jw-new-product-link");
+    if (!sel) return;
+    const current = sel.value;
+    sel.innerHTML = "";
+    sel.appendChild(el("option", { value: "" }, ["— Manual entry (no linked product) —"]));
+    state.products.forEach((p) => sel.appendChild(el("option", { value: p.id }, [p.name])));
+    if (current) sel.value = current;
+  }
+
+  // The rate now shows in its own readout next to the product picker
+  // (rather than packed into the dropdown option text above), plus the
+  // product's reference note when it has one.
   function updateJobProductNote() {
     const noteEl = $("#jw-product-note");
-    if (!noteEl) return;
+    const rateEl = $("#jw-rate-display");
     const found = findJobProduct($("#jw-product") ? $("#jw-product").value : "");
+    if (rateEl) rateEl.textContent = "Rate: " + (found ? fmtINR(found.product.ratePerMT) + "/MT" : "—");
+    if (!noteEl) return;
     if (found && found.product.note) {
       noteEl.textContent = "Note: " + found.product.note;
       noteEl.hidden = false;
@@ -1189,6 +1241,69 @@
       noteEl.hidden = true;
       noteEl.textContent = "";
     }
+  }
+
+  // ---------------------------------------------------------------
+  // Job work — pull raw materials & output straight from a batch
+  // already logged in Log Batch, instead of re-typing them here. Only
+  // offered once a job-work product is linked to a regular Log Batch
+  // product (set from the companies table above); otherwise the raw
+  // material grid below stays a normal manual entry, same as before.
+  // ---------------------------------------------------------------
+  function populateJobSourceBatchSelect() {
+    const sel = $("#jw-source-batch");
+    const hint = $("#jw-source-hint");
+    if (!sel) return;
+    const date = $("#jw-date") ? $("#jw-date").value : "";
+    const found = findJobProduct($("#jw-product") ? $("#jw-product").value : "");
+    const linkedProductId = found ? found.product.productId : "";
+    sel.innerHTML = "";
+    if (!found) {
+      sel.disabled = true;
+      sel.appendChild(el("option", { value: "" }, ["Pick a company and product first…"]));
+      if (hint) { hint.hidden = true; hint.textContent = ""; }
+      return;
+    }
+    if (!linkedProductId) {
+      sel.disabled = true;
+      sel.appendChild(el("option", { value: "" }, ["— Not linked to a Log Batch product —"]));
+      if (hint) {
+        hint.hidden = false;
+        hint.textContent = "An admin can link \"" + found.product.name + "\" to a Log Batch product in the companies table above. Until then, enter raw materials manually below.";
+      }
+      return;
+    }
+    const matches = state.entries.filter((e) => e.date === date && e.productId === linkedProductId);
+    sel.disabled = false;
+    sel.appendChild(el("option", { value: "" }, ["Select a logged batch to pull materials & output from…"]));
+    matches.forEach((e, idx) => {
+      const mt = fmtNum((e.outputQty || 0) / KG_PER_MT, 2);
+      sel.appendChild(el("option", { value: e.id }, ["Batch " + (idx + 1) + " — " + mt + " MT (" + productName(e.productId) + ")"]));
+    });
+    if (hint) {
+      hint.hidden = false;
+      hint.textContent = matches.length
+        ? "Picking a batch fills in its output and raw materials below — you can still adjust them before saving."
+        : "No " + productName(linkedProductId) + " batch logged in Log Batch for " + (date || "this date") + " yet — log it there first, or enter materials manually below.";
+    }
+  }
+
+  function applyJobSourceBatch() {
+    const sel = $("#jw-source-batch");
+    if (!sel || !sel.value) return;
+    const entry = state.entries.find((e) => e.id === sel.value);
+    if (!entry) return;
+    $("#jw-output").value = entry.outputQty ? entry.outputQty / KG_PER_MT : "";
+    if ($("#jw-output-unit")) $("#jw-output-unit").value = "Metric Tonne";
+    $("#jw-operators").value = entry.operators || "";
+    $("#jw-loadmen").value = entry.loadmen || "";
+    const mats = entry.materials || {};
+    $all(".jw-mat-input").forEach((inp) => {
+      const v = mats[inp.dataset.mat];
+      inp.value = v != null ? v : "";
+    });
+    toast("Pulled output & raw materials from that Log Batch entry — adjust if needed, then save.", "success");
+    updateJobLiveSummary();
   }
 
   function rebuildJobMaterialGrid() {
@@ -1334,6 +1449,7 @@
     $("#jw-remarks").value = "";
     $all(".jw-mat-input").forEach((i) => (i.value = ""));
     if (keepDate) $("#jw-date").value = keepDate;
+    populateJobSourceBatchSelect();
     updateJobLiveSummary();
   }
 
@@ -1406,6 +1522,7 @@
       const v = mats[inp.dataset.mat];
       inp.value = v != null ? v : "";
     });
+    populateJobSourceBatchSelect();
     updateJobLiveSummary();
   }
 
@@ -1428,6 +1545,7 @@
     state.editingJobEntryId = entry.id;
     fillJobFormFromEntry(entry, { keepRemarks: true });
     $("#jw-date").value = entry.date || todayStr();
+    populateJobSourceBatchSelect();
     if ($("#jw-edit-banner")) $("#jw-edit-banner").hidden = false;
     if ($("#jw-edit-banner-text")) {
       $("#jw-edit-banner-text").textContent = "Editing " + (entry.productName || "") + " for " + (entry.companyName || "") + " — " + entry.date + ".";
@@ -2270,7 +2388,7 @@
     // Job Work tab
     if ($("#jw-date")) {
       $("#jw-date").value = todayStr();
-      $("#jw-date").addEventListener("change", renderJobTodayList);
+      $("#jw-date").addEventListener("change", () => { renderJobTodayList(); populateJobSourceBatchSelect(); });
     }
     if ($("#jw-date-jump")) {
       $("#jw-date-jump").addEventListener("change", () => {
@@ -2291,8 +2409,9 @@
         rebuildJobMaterialGrid();
       });
     }
-    if ($("#jw-company")) $("#jw-company").addEventListener("change", () => { populateJobProductSelect(); updateJobLiveSummary(); });
-    if ($("#jw-product")) $("#jw-product").addEventListener("change", () => { updateJobProductNote(); updateJobLiveSummary(); });
+    if ($("#jw-company")) $("#jw-company").addEventListener("change", () => { populateJobProductSelect(); updateJobLiveSummary(); populateJobSourceBatchSelect(); });
+    if ($("#jw-product")) $("#jw-product").addEventListener("change", () => { updateJobProductNote(); updateJobLiveSummary(); populateJobSourceBatchSelect(); });
+    if ($("#jw-source-batch")) $("#jw-source-batch").addEventListener("change", applyJobSourceBatch);
 
     // Job Work — company / product management (admin only)
     if ($("#jw-btn-show-add-company")) {
@@ -2328,6 +2447,7 @@
         $("#jw-new-product-name").value = "";
         $("#jw-new-product-rate").value = "";
         $("#jw-new-product-note").value = "";
+        if ($("#jw-new-product-link")) $("#jw-new-product-link").value = "";
       });
     }
     if ($("#jw-btn-confirm-add-product")) {
@@ -2336,12 +2456,14 @@
           $("#jw-new-product-company").value,
           $("#jw-new-product-name").value,
           $("#jw-new-product-rate").value,
-          $("#jw-new-product-note").value
+          $("#jw-new-product-note").value,
+          $("#jw-new-product-link") ? $("#jw-new-product-link").value : ""
         );
         if (item) {
           $("#jw-new-product-name").value = "";
           $("#jw-new-product-rate").value = "";
           $("#jw-new-product-note").value = "";
+          if ($("#jw-new-product-link")) $("#jw-new-product-link").value = "";
           $("#jw-add-product-row").hidden = true;
         }
       });
@@ -2381,6 +2503,7 @@
     rebuildJobMaterialGrid();
     populateJobCompanySelect();
     renderJobCompanies();
+    populateJobSourceBatchSelect();
     updateJobLiveSummary();
     renderJobTodayList();
     renderJobPnL();

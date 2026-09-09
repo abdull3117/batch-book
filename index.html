@@ -11,7 +11,7 @@
 <!-- Cache-busting: GitHub Pages caches these for 10 minutes (Cache-Control: max-age=600).
      Bump the ?v= number on app.js, style.css and firebase-config.js below every time
      any of those files are redeployed, so users don't keep running a stale cached copy. -->
-<link rel="stylesheet" href="style.css?v=7" />
+<link rel="stylesheet" href="style.css?v=8" />
 </head>
 <body>
 
@@ -313,13 +313,14 @@
       </div>
       <div class="table-wrap max-scroll">
         <table>
-          <thead><tr><th>Company</th><th>Product</th><th>Notes</th><th class="num">Rate (&#8377;/MT)</th></tr></thead>
+          <thead><tr><th>Company</th><th>Product</th><th>Notes</th><th>Linked Log Batch product</th><th class="num">Rate (&#8377;/MT)</th></tr></thead>
           <tbody id="jw-companies-body"></tbody>
         </table>
       </div>
       <div id="jw-admin-tools">
+        <p class="hint" style="margin:2px 0 10px;">Link a product to a Log Batch product so its raw materials &amp; output can be pulled straight from a batch already logged there &mdash; see &ldquo;Pull raw materials from a Log Batch entry&rdquo; below.</p>
         <div class="btn-row">
-          <button class="btn btn-secondary btn-small" id="jw-btn-save-rates">Save rate changes</button>
+          <button class="btn btn-secondary btn-small" id="jw-btn-save-rates">Save rate &amp; link changes</button>
         </div>
         <div class="add-item-row" id="jw-add-company-row" hidden>
           <input type="text" id="jw-new-company-name" placeholder="Company name" />
@@ -330,6 +331,7 @@
           <select id="jw-new-product-company" style="min-width:160px;"></select>
           <input type="text" id="jw-new-product-name" placeholder="Product name" />
           <input type="number" id="jw-new-product-rate" placeholder="Rate &#8377;/MT" min="0" step="any" style="max-width:120px;" />
+          <select id="jw-new-product-link" style="min-width:200px;"></select>
           <input type="text" id="jw-new-product-note" placeholder="Notes (optional, e.g. mix ratio)" style="min-width:180px;" />
           <button class="btn btn-primary btn-small" id="jw-btn-confirm-add-product">Add product</button>
           <button class="btn btn-secondary btn-small" id="jw-btn-cancel-add-product">Cancel</button>
@@ -359,6 +361,7 @@
           <div class="field">
             <label for="jw-product">Product</label>
             <select id="jw-product"></select>
+            <div class="rate-readout" id="jw-rate-display">Rate: &#8212;</div>
           </div>
           <div class="field">
             <label for="jw-output">Output produced</label>
@@ -373,6 +376,12 @@
           </div>
         </div>
         <p class="hint" id="jw-product-note" hidden style="margin:-8px 0 12px;"></p>
+
+        <div class="field wide" id="jw-source-batch-field" style="margin-bottom:16px;">
+          <label for="jw-source-batch">Pull raw materials from a Log Batch entry</label>
+          <select id="jw-source-batch"></select>
+          <p class="hint" id="jw-source-hint" style="margin-top:6px;"></p>
+        </div>
 
         <div class="card-title" style="margin-top:6px;">Raw material used</div>
         <div class="mat-search-row">
@@ -653,6 +662,6 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
-<script src="app.js?v=11"></script>
+<script src="app.js?v=12"></script>
 </body>
 </html>

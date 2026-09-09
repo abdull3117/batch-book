@@ -196,6 +196,10 @@ button, input, select, textarea { font-family: inherit; font-size: inherit; colo
   outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft);
 }
 .field textarea { resize: vertical; min-height: 44px; }
+.rate-readout {
+  font-size: .76rem; font-weight: 700; color: var(--purple); background: var(--purple-soft);
+  border-radius: var(--radius-sm); padding: 6px 10px; text-align: center;
+}
 
 .quickfill-row { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; padding-bottom: 14px; border-bottom: 2px dashed var(--border); }
 .quickfill-row .hint { font-size: .74rem; color: var(--text-faint); font-weight: 600; }
