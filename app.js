@@ -1526,6 +1526,11 @@
         state.entries = state.entries.filter((e) => e.id !== id);
         renderTodayList();
         renderReports();
+        // Stock's Produced/Closing figures are computed live from
+        // state.entries — without this, deleting a batch here (offline
+        // mode, or one not yet synced to Firestore) left the Stock tab
+        // showing the old totals until something else refreshed it.
+        renderStock();
       }
       if (state.editingEntryId === id) {
         exitEditMode();
