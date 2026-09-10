@@ -2193,7 +2193,7 @@
     if (filterDate) buckets = buckets.filter((b) => b.date === filterDate);
     buckets = buckets.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0)).slice(0, 200);
     if (!buckets.length) {
-      body.appendChild(el("tr", {}, [el("td", { colspan: "7", class: "empty-hint" }, ["No stock entries yet."])]));
+      body.appendChild(el("tr", {}, [el("td", { colspan: "8", class: "empty-hint" }, ["No stock entries yet."])]));
       return;
     }
     buckets.forEach((b) => {
@@ -2201,6 +2201,12 @@
       const producedMT = producedFor(b.date, b.productId, b.companyId) / KG_PER_MT;
       const dispatched = dispatchedFor(b.date, b.productId, b.companyId);
       const closing = closingFor(b.date, b.productId, b.companyId);
+      // Only a bucket backed by an actual saved Stock doc (an opening
+      // override or a manually-entered dispatch) can be deleted — a
+      // bucket that exists purely because a batch was tagged here has no
+      // doc of its own; delete the batch itself (Log Batch or Reports)
+      // to remove that instead.
+      const existingDoc = stockRowFor(b.date, b.productId, b.companyId);
       body.appendChild(el("tr", {}, [
         el("td", {}, [b.date]),
         el("td", {}, [productName(b.productId)]),
@@ -2209,8 +2215,33 @@
         el("td", { class: "num" }, [fmtNum(producedMT, 2)]),
         el("td", { class: "num" }, [fmtNum(dispatched, 2)]),
         el("td", { class: "num strong" }, [fmtNum(closing, 2)]),
+        el("td", { class: "num" }, [
+          existingDoc
+            ? el("button", {
+                class: "icon-btn danger", title: "Delete this stock entry (opening/dispatched record)",
+                onclick: () => deleteStockEntry(existingDoc.id, b),
+              }, ["✕"])
+            : "",
+        ]),
       ]));
     });
+  }
+
+  async function deleteStockEntry(id, bucket) {
+    if (!id) return;
+    const label = productName(bucket.productId) + " on " + bucket.date + (bucket.companyId ? " (" + (bucket.companyName || bucket.companyId) + ")" : "");
+    if (!confirm("Delete this stock entry for " + label + "? This removes its opening/dispatched record — it can't be undone.")) return;
+    try {
+      if (state.db && !String(id).startsWith("local_")) {
+        await state.db.collection("stock").doc(id).delete();
+      } else {
+        state.stock = state.stock.filter((s) => s.id !== id);
+        renderStock();
+      }
+      toast("Stock entry deleted.", "warn");
+    } catch (e) {
+      toast("Could not delete: " + e.message, "error");
+    }
   }
 
   // ---------------------------------------------------------------
