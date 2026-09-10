@@ -190,6 +190,7 @@
     role: null, // "admin" | "team" | null (locked)
     entries: [],
     stock: [],
+    dayLabour: {}, // date -> { operators, loadmen } — the shared day-crew doc, cached per date as it's loaded
     activeTab: "entry",
     materialFilter: "",
     reportFilter: { start: "", end: "", productId: "" },
@@ -341,6 +342,82 @@
     const totalCost = rmCost + processingCost + labourCost;
     const costPerKg = outputQty > 0 ? totalCost / outputQty : 0;
     return { rmCost, processingCost, labourCost, totalCost, costPerKg };
+  }
+
+  // ---------------------------------------------------------------
+  // Shared day-crew labour split — when several products are produced the
+  // same day by the same crew instead of a dedicated team per product, the
+  // day's total operators/loadmen are entered once (dayLabour/<date>) and
+  // each batch's labour cost is that day's total labour cost divided
+  // across the day's participating batches in proportion to their own
+  // output. A batch keeps out of the split (and keeps computeCosts()'s
+  // normal per-batch number) if it has its own product or company labour
+  // rate override, or never opted into the day split at all.
+  // ---------------------------------------------------------------
+  async function loadDayLabourForDate(date) {
+    if (!date) return null;
+    if (state.dayLabour[date] !== undefined) return state.dayLabour[date];
+    if (!state.db) return null;
+    try {
+      const doc = await state.db.collection("dayLabour").doc(date).get();
+      state.dayLabour[date] = doc.exists ? doc.data() : null;
+    } catch (e) {
+      state.dayLabour[date] = null;
+    }
+    return state.dayLabour[date];
+  }
+
+  function dayLabourPoolFor(date) {
+    return state.entries.filter((e) =>
+      e.date === date && e.usesDayLabourSplit &&
+      companyLabourCostOverride(e.jobworkCompanyId) == null &&
+      productLabourCostOverride(e.productId) == null
+    );
+  }
+
+  // Recomputes and rewrites labourCost/totalCost/costPerKg (and
+  // jobworkProfit, for tagged batches) for every batch in that date's
+  // shared-crew pool. Called after any save/edit/delete that could shift
+  // the pool's total output or membership — cheap no-op if that date has
+  // no day-crew doc or nothing in the pool.
+  async function recomputeDayLabourSplit(date) {
+    if (!date) return;
+    const dayDoc = await loadDayLabourForDate(date);
+    const pool = dayLabourPoolFor(date);
+    if (!dayDoc || !pool.length) return;
+    const dayLabourCost = (Number(dayDoc.operators) || 0) * (Number(state.labour.operatorRate) || 0) +
+      (Number(dayDoc.loadmen) || 0) * (Number(state.labour.loadmanRate) || 0);
+    const totalOutputKg = pool.reduce((s, e) => s + (Number(e.outputQty) || 0), 0);
+    const updates = pool.map((e) => {
+      const share = totalOutputKg > 0 ? dayLabourCost * ((Number(e.outputQty) || 0) / totalOutputKg) : 0;
+      const totalCost = (Number(e.rmCost) || 0) + (Number(e.processingCost) || 0) + share;
+      const costPerKg = e.outputQty > 0 ? totalCost / e.outputQty : 0;
+      const fields = { labourCost: share, totalCost, costPerKg };
+      if (e.jobworkCompanyId) fields.jobworkProfit = (Number(e.jobworkRevenue) || 0) - totalCost;
+      return { id: e.id, fields };
+    });
+    if (state.db) {
+      const batch = state.db.batch();
+      updates.forEach((u) => batch.update(state.db.collection("entries").doc(u.id), u.fields));
+      await batch.commit();
+      // The entries onSnapshot listener will refresh state.entries and
+      // re-render everywhere once these writes come back down.
+    } else {
+      updates.forEach((u) => {
+        const idx = state.entries.findIndex((e) => e.id === u.id);
+        if (idx !== -1) state.entries[idx] = Object.assign({}, state.entries[idx], u.fields);
+      });
+      renderTodayList();
+      renderReports();
+    }
+  }
+
+  async function saveDayLabour(date, operators, loadmen) {
+    const payload = { date, operators: Number(operators) || 0, loadmen: Number(loadmen) || 0, updatedAt: new Date().toISOString() };
+    state.dayLabour[date] = payload;
+    if (state.db) {
+      await state.db.collection("dayLabour").doc(date).set(payload);
+    }
   }
 
   // ---------------------------------------------------------------
@@ -1063,23 +1140,48 @@
     return out;
   }
 
+  // Shows/hides the day-crew inputs vs the normal per-batch Operators/
+  // Loadmen fields, and preloads that date's existing day-crew totals (if
+  // any) when the checkbox is switched on or the date is changed while
+  // it's already on.
+  async function toggleDayLabourUI() {
+    const checked = $("#f-use-daylabour") ? $("#f-use-daylabour").checked : false;
+    if ($("#f-labour-row")) $("#f-labour-row").hidden = checked;
+    if ($("#f-daylabour-row")) $("#f-daylabour-row").hidden = !checked;
+    if ($("#f-daylabour-hint")) $("#f-daylabour-hint").hidden = !checked;
+    if (checked) {
+      const date = $("#f-date") ? $("#f-date").value : todayStr();
+      const existing = await loadDayLabourForDate(date);
+      if ($("#f-daylabour-operators")) $("#f-daylabour-operators").value = existing ? existing.operators : "";
+      if ($("#f-daylabour-loadmen")) $("#f-daylabour-loadmen").value = existing ? existing.loadmen : "";
+    }
+    updateLiveSummary();
+  }
+
   function updateLiveSummary() {
     // The form collects output in whichever unit is picked; convert to
     // Kg-equivalent here since costing (rmCost, costPerKg) stays Kg-based.
     const outputVal = parseFloat($("#f-output").value) || 0;
     const outputUnit = $("#f-output-unit").value;
     const outputQty = outputToKg(outputVal, outputUnit);
-    const operators = parseFloat($("#f-operators").value) || 0;
-    const loadmen = parseFloat($("#f-loadmen").value) || 0;
+    const useDayLabour = $("#f-use-daylabour") ? $("#f-use-daylabour").checked : false;
+    const operators = useDayLabour ? 0 : parseFloat($("#f-operators").value) || 0;
+    const loadmen = useDayLabour ? 0 : parseFloat($("#f-loadmen").value) || 0;
     const mats = getFormMaterialsQty();
     const productId = $("#f-product") ? $("#f-product").value : "";
     const companyId = $("#f-jobwork-company") ? $("#f-jobwork-company").value : "";
     const c = computeCosts(mats, outputQty, operators, loadmen, productId, companyId);
     $("#sum-rm").textContent = fmtINR(c.rmCost);
     $("#sum-processing").textContent = fmtINR(c.processingCost);
-    $("#sum-labour").textContent = fmtINR(c.labourCost);
-    $("#sum-total").textContent = fmtINR(c.totalCost);
-    $("#sum-cpk").textContent = outputQty > 0 ? fmtINR(c.costPerKg) : "—";
+    // With the shared day crew on (and no product/company labour
+    // override, which always wins), this batch's real labour cost isn't
+    // knowable until it's saved and split against today's other pooled
+    // batches — computeCosts() alone would show ₹0 here, which reads as
+    // wrong rather than "not decided yet".
+    const labourIsPooled = useDayLabour && companyLabourCostOverride(companyId) == null && productLabourCostOverride(productId) == null;
+    $("#sum-labour").textContent = labourIsPooled ? "Split after saving" : fmtINR(c.labourCost);
+    $("#sum-total").textContent = labourIsPooled ? "—" : fmtINR(c.totalCost);
+    $("#sum-cpk").textContent = (!labourIsPooled && outputQty > 0) ? fmtINR(c.costPerKg) : "—";
     const usedCount = Object.keys(mats).length;
     $("#sum-mat-count").textContent = usedCount + (usedCount === 1 ? " material used" : " materials used");
     updateJobworkLiveSummary(outputQty, c);
@@ -1160,8 +1262,16 @@
     const outputVal = parseFloat($("#f-output").value) || 0;
     const outputUnit = $("#f-output-unit").value;
     const outputQty = outputToKg(outputVal, outputUnit);
-    const operators = parseFloat($("#f-operators").value) || 0;
-    const loadmen = parseFloat($("#f-loadmen").value) || 0;
+    const useDayLabour = $("#f-use-daylabour") ? $("#f-use-daylabour").checked : false;
+    // With the shared day crew on, this batch's own operators/loadmen
+    // boxes are hidden and not what drives its labour cost — the day
+    // totals do, split across today's pooled batches by recomputeDayLabourSplit()
+    // right after saving. Zero them out here so computeCosts() doesn't
+    // also add a per-batch labour figure on top of that.
+    const operators = useDayLabour ? 0 : parseFloat($("#f-operators").value) || 0;
+    const loadmen = useDayLabour ? 0 : parseFloat($("#f-loadmen").value) || 0;
+    const dayOperators = $("#f-daylabour-operators") ? parseFloat($("#f-daylabour-operators").value) || 0 : 0;
+    const dayLoadmen = $("#f-daylabour-loadmen") ? parseFloat($("#f-daylabour-loadmen").value) || 0 : 0;
     const remarks = $("#f-remarks").value.trim();
     const mats = getFormMaterialsQty();
 
@@ -1187,6 +1297,7 @@
     const existing = editingId ? state.entries.find((e) => e.id === editingId) : null;
     const payload = {
       date, productId, outputQty, materials: mats, operators, loadmen, remarks,
+      usesDayLabourSplit: useDayLabour,
       rmCost: c.rmCost, processingCost: c.processingCost, labourCost: c.labourCost,
       totalCost: c.totalCost, costPerKg: c.costPerKg,
       // Keep the original createdAt on an edit so the entry doesn't jump
@@ -1226,6 +1337,7 @@
     btn.textContent = editingId ? "Updating…" : "Saving…";
     try {
       const unitLabel = outputUnit === "Metric Tonne" ? "MT" : outputUnit;
+      let savedId = editingId;
       if (state.db) {
         if (editingId) {
           await state.db.collection("entries").doc(editingId).set(payload);
@@ -1233,6 +1345,7 @@
           toast("Batch updated — " + productName(productId) + ", " + fmtNum(outputVal, 2) + " " + unitLabel + ".", "success");
         } else {
           const ref = await state.db.collection("entries").add(payload);
+          savedId = ref.id;
           syncEntryToSheet(ref.id, payload);
           toast("Batch saved — " + productName(productId) + ", " + fmtNum(outputVal, 2) + " " + unitLabel + ". Ready for the next batch.", "success");
         }
@@ -1242,10 +1355,26 @@
           if (idx !== -1) state.entries[idx] = Object.assign({ id: editingId }, payload);
           toast("Batch updated locally (preview only — open the published link to sync).", "warn");
         } else {
-          payload.id = "local_" + Date.now();
+          savedId = "local_" + Date.now();
+          payload.id = savedId;
           state.entries.unshift(payload);
           toast("Saved locally (preview only — open the published link to sync).", "warn");
         }
+      }
+      // Shared day-crew split: save the day's crew totals (if this batch
+      // uses them) and rebalance labour cost across today's pooled
+      // batches. Merge this save into state.entries first — for the
+      // Firestore path that's ahead of the realtime listener, so the
+      // split below already accounts for this batch's own output
+      // instead of racing the listener for it.
+      if (savedId) {
+        const merged = Object.assign({ id: savedId }, payload);
+        const idx = state.entries.findIndex((e) => e.id === savedId);
+        if (idx !== -1) state.entries[idx] = merged; else state.entries.unshift(merged);
+      }
+      if (useDayLabour) await saveDayLabour(date, dayOperators, dayLoadmen);
+      await recomputeDayLabourSplit(date);
+      if (!state.db) {
         renderTodayList();
         renderReports();
         renderStock();
@@ -1376,6 +1505,13 @@
       const v = mats[inp.dataset.mat];
       inp.value = v != null ? v : "";
     });
+    // Reflect whether this batch is part of the shared day-crew pool —
+    // otherwise re-saving it while editing would silently drop it out
+    // (the checkbox would read as unchecked) even though it was pooled.
+    if ($("#f-use-daylabour")) {
+      $("#f-use-daylabour").checked = !!entry.usesDayLabourSplit;
+      toggleDayLabourUI();
+    }
     updateLiveSummary();
   }
 
@@ -1450,9 +1586,13 @@
       ["Date", entry.date || "—"],
       ["Product", productName(entry.productId)],
       ["Output", fmtNum((entry.outputQty || 0) / KG_PER_MT, 2) + " MT"],
-      ["Operators", fmtNum(entry.operators || 0, 0)],
-      ["Loadmen", fmtNum(entry.loadmen || 0, 0)],
     ];
+    if (entry.usesDayLabourSplit) {
+      rows.push(["Crew", "Shared day crew (labour split by output — see " + entry.date + "'s total)"]);
+    } else {
+      rows.push(["Operators", fmtNum(entry.operators || 0, 0)]);
+      rows.push(["Loadmen", fmtNum(entry.loadmen || 0, 0)]);
+    }
     rows.forEach(([k, v]) => {
       body.appendChild(el("div", { class: "view-row" }, [
         el("span", { class: "k" }, [k]), el("span", { class: "v" }, [String(v)]),
@@ -1519,11 +1659,20 @@
   async function deleteEntry(id) {
     if (!id) return;
     if (!confirm("Delete this batch entry? This can't be undone.")) return;
+    const target = state.entries.find((e) => e.id === id);
+    const date = target ? target.date : null;
     try {
       if (state.db && !String(id).startsWith("local_")) {
         await state.db.collection("entries").doc(id).delete();
+        // Removing this batch changes the pool's total output for any
+        // shared day-crew split still in effect for that date — rebalance
+        // the rest. Drop it from our local copy first since the realtime
+        // listener hasn't come back yet.
+        state.entries = state.entries.filter((e) => e.id !== id);
+        if (date) await recomputeDayLabourSplit(date);
       } else {
         state.entries = state.entries.filter((e) => e.id !== id);
+        if (date) await recomputeDayLabourSplit(date);
         renderTodayList();
         renderReports();
         // Stock's Produced/Closing figures are computed live from
@@ -2443,6 +2592,10 @@
 
     $("#f-date").value = todayStr();
     $("#f-date").addEventListener("change", renderTodayList);
+    $("#f-date").addEventListener("change", () => {
+      if ($("#f-use-daylabour") && $("#f-use-daylabour").checked) toggleDayLabourUI();
+    });
+    if ($("#f-use-daylabour")) $("#f-use-daylabour").addEventListener("change", toggleDayLabourUI);
     if ($("#date-jump")) {
       $("#date-jump").addEventListener("change", () => {
         const v = $("#date-jump").value;

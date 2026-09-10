@@ -138,7 +138,7 @@
         </div>
         <div id="material-grid"></div>
 
-        <div class="labour-row">
+        <div class="labour-row" id="f-labour-row">
           <div class="field">
             <label for="f-operators">Operators (count)</label>
             <input type="number" min="0" step="1" id="f-operators" placeholder="0" />
@@ -148,6 +148,21 @@
             <input type="number" min="0" step="1" id="f-loadmen" placeholder="0" />
           </div>
         </div>
+        <label style="display:flex; align-items:center; gap:8px; cursor:pointer; margin-top:10px; font-size:.86rem; font-weight:600;">
+          <input type="checkbox" id="f-use-daylabour" style="width:auto;" />
+          Same crew across today's batches &mdash; split labour cost by output instead
+        </label>
+        <div class="labour-row" id="f-daylabour-row" hidden style="margin-top:8px;">
+          <div class="field">
+            <label for="f-daylabour-operators">Today's total operators</label>
+            <input type="number" min="0" step="1" id="f-daylabour-operators" placeholder="0" />
+          </div>
+          <div class="field">
+            <label for="f-daylabour-loadmen">Today's total loadmen</label>
+            <input type="number" min="0" step="1" id="f-daylabour-loadmen" placeholder="0" />
+          </div>
+        </div>
+        <p class="hint" id="f-daylabour-hint" hidden style="margin-top:6px;">Enter the whole day's crew once, on any one of today's batches &mdash; each batch's labour cost is then split in proportion to its own output across every batch logged today that also uses this (a batch with its own labour rate override, by product or job-work company, is left out of the split and keeps that rate).</p>
         <div class="field wide" style="margin-top:12px;">
           <label for="f-remarks">Remarks (optional)</label>
           <textarea id="f-remarks" placeholder="Anything the office should know about this batch"></textarea>
@@ -671,6 +686,6 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
-<script src="app.js?v=26"></script>
+<script src="app.js?v=27"></script>
 </body>
 </html>
