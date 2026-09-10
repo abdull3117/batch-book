@@ -2033,14 +2033,33 @@
     const row = stockRowFor(date, productId, companyId);
     return row ? Number(row.dispatched) || 0 : 0;
   }
+  // Most recent earlier date with any activity (Stock doc or tagged batch)
+  // in this exact product/company bucket, or null if this is day one.
+  function priorDateFor(productId, date, companyId) {
+    const key = stockKey(companyId);
+    return Array.from(new Set(
+      stockBucketsFor(productId)
+        .filter((b) => stockKey(b.companyId) === key && b.date < date)
+        .map((b) => b.date)
+    )).sort((a, b) => (a < b ? 1 : -1))[0] || null;
+  }
+
   function openingFor(date, productId, companyId) {
+    const priorDate = priorDateFor(productId, date, companyId);
+    if (priorDate) {
+      // A prior day exists for this bucket — opening is ALWAYS derived
+      // from that day's closing, never read back from a value saved on
+      // this exact day's Stock doc. Otherwise, once a Stock entry was
+      // saved (e.g. just to record a dispatch), its opening would stay
+      // frozen at whatever was auto-filled at that moment and would stop
+      // reflecting later edits to an earlier day's production/dispatch —
+      // this is what "opening/closing not updating" looked like.
+      return closingFor(priorDate, productId, companyId);
+    }
+    // No earlier activity at all in this bucket — this is day one, so a
+    // manually-entered starting balance (if any) is the real opening.
     const row = stockRowFor(date, productId, companyId);
-    if (row) return Number(row.opening) || 0;
-    // No explicit Stock-tab entry for this exact day — carry the balance
-    // forward from the most recent prior day with activity, so every
-    // day's opening stays synced with the running total up to date
-    // instead of silently resetting to 0 whenever a day was skipped.
-    return suggestOpening(productId, date, companyId);
+    return row ? Number(row.opening) || 0 : 0;
   }
   function closingFor(date, productId, companyId) {
     const opening = openingFor(date, productId, companyId);
@@ -2049,12 +2068,7 @@
   }
 
   function suggestOpening(productId, date, companyId) {
-    const key = stockKey(companyId);
-    const priorDate = Array.from(new Set(
-      stockBucketsFor(productId)
-        .filter((b) => stockKey(b.companyId) === key && b.date < date)
-        .map((b) => b.date)
-    )).sort((a, b) => (a < b ? 1 : -1))[0];
+    const priorDate = priorDateFor(productId, date, companyId);
     if (!priorDate) return 0;
     return closingFor(priorDate, productId, companyId);
   }
@@ -2077,11 +2091,26 @@
     const companyId = $("#st-company") ? $("#st-company").value : "";
     if (!productId || !date) return;
     const openingField = $("#st-opening");
+    const openingHint = $("#st-opening-hint");
     const existing = stockRowFor(date, productId, companyId);
+    const priorDate = priorDateFor(productId, date, companyId);
     if (openingField) {
-      openingField.disabled = false;
-      openingField.placeholder = "0";
-      openingField.value = existing ? existing.opening : suggestOpening(productId, date, companyId);
+      if (priorDate) {
+        // Prior activity exists for this product/company — opening is
+        // carried forward automatically, so lock the field to the
+        // computed value instead of letting a typed-in number go stale.
+        openingField.disabled = true;
+        openingField.value = fmtNum(closingFor(priorDate, productId, companyId), 2);
+        openingField.placeholder = "";
+        if (openingHint) openingHint.textContent = "Auto-carried from " + priorDate + "'s closing stock.";
+      } else {
+        // Day one for this bucket — this really is a manually-entered
+        // starting balance, so let it be edited.
+        openingField.disabled = false;
+        openingField.placeholder = "0";
+        openingField.value = existing ? existing.opening : "";
+        if (openingHint) openingHint.textContent = "No earlier record for this product/company — enter the actual starting stock.";
+      }
     }
     $("#st-dispatched").value = existing ? existing.dispatched : "";
   }
