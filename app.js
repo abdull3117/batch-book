@@ -1850,6 +1850,10 @@
                 class: "icon-btn", title: "Edit this batch",
                 onclick: () => editEntryFromReports(r),
               }, ["✎"]),
+              el("button", {
+                class: "icon-btn danger", title: "Delete this batch",
+                onclick: () => deleteEntry(r.id),
+              }, ["✕"]),
             ]),
           ]),
         ]));
