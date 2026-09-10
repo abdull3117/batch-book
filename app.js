@@ -2122,6 +2122,31 @@
       }
     }
     $("#st-dispatched").value = existing ? existing.dispatched : "";
+    updateStockClosingPreview();
+  }
+
+  // Live "what will closing stock be" readout for the Add/update stock
+  // form — recalculated on every keystroke in Dispatched (and Opening,
+  // on a bucket's day one where it's still editable) so the person can
+  // see the remaining balance immediately, without changing what
+  // "Opening stock" itself means or saving anything yet.
+  function updateStockClosingPreview() {
+    const preview = $("#st-closing-preview");
+    if (!preview) return;
+    const productId = $("#st-product").value;
+    const date = $("#st-date").value;
+    const companyId = $("#st-company") ? $("#st-company").value : "";
+    if (!productId || !date) {
+      preview.hidden = true;
+      return;
+    }
+    const opening = parseFloat($("#st-opening").value) || 0;
+    const dispatched = parseFloat($("#st-dispatched").value) || 0;
+    const producedMT = producedFor(date, productId, companyId) / KG_PER_MT;
+    const closing = opening + producedMT - dispatched;
+    preview.hidden = false;
+    preview.textContent = "Closing stock after this: " + fmtNum(closing, 2) + " MT" +
+      (producedMT ? " (" + fmtNum(opening, 2) + " opening + " + fmtNum(producedMT, 2) + " produced − " + fmtNum(dispatched, 2) + " dispatched)" : "");
   }
 
   async function submitStock() {
@@ -2556,6 +2581,9 @@
     $("#st-product").addEventListener("change", stockAutofillOpening);
     $("#st-date").addEventListener("change", stockAutofillOpening);
     if ($("#st-company")) $("#st-company").addEventListener("change", stockAutofillOpening);
+    // Live closing-stock preview — updates as you type, not just on save.
+    $("#st-dispatched").addEventListener("input", updateStockClosingPreview);
+    $("#st-opening").addEventListener("input", updateStockClosingPreview);
     if ($("#st-filter-company")) $("#st-filter-company").addEventListener("change", renderStock);
     if ($("#st-filter-date")) $("#st-filter-date").addEventListener("change", renderStock);
     $("#btn-stock-save").addEventListener("click", submitStock);
