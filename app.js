@@ -977,6 +977,7 @@
       if (current) sel.value = current;
     });
     populateStockProductSelect();
+    populateStockFilterProductSelect();
     populateReportProductFilter();
     populateJobProductLinkSelect();
     populateFallbackProductSelect();
@@ -2141,6 +2142,19 @@
     if (current) sel.value = current;
   }
 
+  // Stock ledger's own "Product" filter — separate from the Add/update
+  // form's product picker above, and separate from Reports' product
+  // filter, so switching one never resets another.
+  function populateStockFilterProductSelect() {
+    const sel = $("#st-filter-product");
+    if (!sel) return;
+    const current = sel.value;
+    sel.innerHTML = "";
+    sel.appendChild(el("option", { value: "" }, ["All products"]));
+    state.products.forEach((p) => sel.appendChild(el("option", { value: p.id }, [p.name])));
+    if (current) sel.value = current;
+  }
+
   // Every company (plus the "regular"/no-company bucket) now runs its own
   // fully independent Opening -> Produced -> Dispatched -> Closing chain
   // for a given product. A batch logged against a job-work company feeds
@@ -2338,6 +2352,7 @@
     const body = $("#stock-body");
     body.innerHTML = "";
     const filterCompany = $("#st-filter-company") ? $("#st-filter-company").value : "";
+    const filterProduct = $("#st-filter-product") ? $("#st-filter-product").value : "";
 
     // Build the full set of (date, product, company) buckets that have
     // either an explicit Stock doc or batch production tagged to them, so
@@ -2365,6 +2380,7 @@
     if (filterCompany === "__regular__") buckets = buckets.filter((b) => !b.companyId);
     else if (filterCompany) buckets = buckets.filter((b) => b.companyId === filterCompany);
     if (filterDate) buckets = buckets.filter((b) => b.date === filterDate);
+    if (filterProduct) buckets = buckets.filter((b) => b.productId === filterProduct);
     buckets = buckets.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0)).slice(0, 200);
     if (!buckets.length) {
       body.appendChild(el("tr", {}, [el("td", { colspan: "8", class: "empty-hint" }, ["No stock entries yet."])]));
@@ -2739,6 +2755,7 @@
     $("#st-opening").addEventListener("input", updateStockClosingPreview);
     if ($("#st-filter-company")) $("#st-filter-company").addEventListener("change", renderStock);
     if ($("#st-filter-date")) $("#st-filter-date").addEventListener("change", renderStock);
+    if ($("#st-filter-product")) $("#st-filter-product").addEventListener("change", renderStock);
     $("#btn-stock-save").addEventListener("click", submitStock);
 
     $("#btn-save-rates").addEventListener("click", saveMaterialRates);
