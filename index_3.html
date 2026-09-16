@@ -1,0 +1,695 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Batch Book — EMR Groups</title>
+<link rel="icon" href="logo.jpg?v=1" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@600;700;800&family=Quicksand:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet">
+<!-- Cache-busting: GitHub Pages caches these for 10 minutes (Cache-Control: max-age=600).
+     Bump the ?v= number on app.js, style.css and firebase-config.js below every time
+     any of those files are redeployed, so users don't keep running a stale cached copy. -->
+<link rel="stylesheet" href="style.css?v=11" />
+</head>
+<body>
+
+<!-- ============ ACCESS GATE ============
+     Simple shared-password gate: two roles (admin / team), password
+     hashes stored in Firestore (settings/access) so they can be changed
+     from Settings without a redeploy. This is a UI-level gate for
+     everyday privacy between roles, not a hardened security boundary. -->
+<div id="lock-screen" class="lock-screen">
+  <div class="lock-card">
+    <div class="brand-mark" style="margin:0 auto 14px; width:72px; height:72px;"><img src="logo.jpg?v=1" alt="EMR Groups" /></div>
+    <h2>Batch Book</h2>
+    <p class="sub">EMR Groups &middot; enter your access password</p>
+    <input type="password" id="lock-password" placeholder="Password" autocomplete="current-password" />
+    <p class="lock-error" id="lock-error" hidden></p>
+    <button class="btn btn-primary" id="btn-unlock" style="width:100%; margin-top:12px;">Unlock</button>
+    <p class="hint" style="margin-top:14px;">Ask your admin for the team password if you don&rsquo;t have one.</p>
+  </div>
+</div>
+
+<div id="app" hidden>
+<div class="topbar">
+  <div class="brand">
+    <div class="brand-mark"><img src="logo.jpg?v=1" alt="EMR Groups" /></div>
+    <div class="brand-text">
+      <h1>Batch Book</h1>
+      <p class="sub">EMR Groups &middot; daily production log</p>
+    </div>
+  </div>
+  <div class="tabs" role="tablist">
+    <button class="tab-btn active" data-tab="entry">📝 Log Batch</button>
+    <button class="tab-btn" data-tab="reports" id="tab-btn-reports">📊 Reports</button>
+    <button class="tab-btn" data-tab="stock">📦 Stock</button>
+    <button class="tab-btn" data-tab="jobwork" id="tab-btn-jobwork">🤝 Job Work</button>
+    <button class="tab-btn" data-tab="settings" id="tab-btn-settings">⚙️ Settings</button>
+  </div>
+  <div class="sync">
+    <span class="sync-dot connecting" id="sync-dot"></span>
+    <span id="sync-label">Connecting&hellip;</span>
+    <span class="role-badge" id="role-badge" hidden></span>
+    <button class="btn btn-secondary btn-small" id="btn-logout" hidden>Log out</button>
+  </div>
+</div>
+
+<div id="app-body">
+
+  <!-- ============ LOG BATCH ============ -->
+  <section class="view active" id="view-entry">
+    <div class="view-header">
+      <h2>📝 Log today&rsquo;s batch</h2>
+      <p>One row per batch. Save this one, then log the next &mdash; add as many batches and different products as you need for the same day.</p>
+    </div>
+
+    <div class="entry-layout">
+      <div class="card" id="entry-form">
+        <div class="edit-banner" id="edit-banner" hidden>
+          <span id="edit-banner-text">Editing a previously logged batch</span>
+          <button type="button" class="btn btn-secondary btn-small" id="btn-cancel-edit">Cancel edit</button>
+        </div>
+        <div class="quickfill-row" id="quickfill-row">
+          <button type="button" class="btn btn-secondary btn-small" id="btn-repeat-last">&#8635; Repeat last batch</button>
+          <span class="hint">Fills product, materials &amp; labour from your last batch today &mdash; handy for back-to-back batches.</span>
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label for="f-date">Date</label>
+            <input type="date" id="f-date" />
+          </div>
+          <div class="field" style="grid-column: span 2;">
+            <label for="f-product">Product</label>
+            <select id="f-product" class="product-select"></select>
+            <div class="inline-add-row" id="add-product-inline" hidden>
+              <input type="text" id="new-prod-name-inline" placeholder="New product name" />
+              <select id="new-prod-unit-inline" class="unit-select">
+                <option value="Kg">Kg</option>
+                <option value="Litre">Litre</option>
+                <option value="Metric Tonne">Metric Tonne</option>
+              </select>
+              <button type="button" class="btn btn-primary btn-small" id="btn-confirm-add-product-inline">Add</button>
+              <button type="button" class="btn btn-secondary btn-small" id="btn-cancel-add-product-inline">Cancel</button>
+            </div>
+          </div>
+          <div class="field">
+            <label for="f-output">Output produced</label>
+            <div style="display:flex; gap:6px;">
+              <input type="number" min="0" step="any" inputmode="decimal" id="f-output" placeholder="0" style="flex:1; min-width:0;" />
+              <select id="f-output-unit" class="unit-select" style="max-width:100px;">
+                <option value="Kg">Kg</option>
+                <option value="Litre">Litre</option>
+                <option value="Metric Tonne" selected>MT</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <div class="field-row" id="f-jobwork-row" style="margin-top:-6px;">
+          <div class="field wide">
+            <label for="f-jobwork-company">Job work for (optional)</label>
+            <select id="f-jobwork-company"></select>
+            <div class="rate-readout" id="f-jobwork-rate-display" hidden>Rate: &#8212;</div>
+            <div class="field" id="f-jobwork-rate-input-wrap" hidden style="margin-top:8px; max-width:260px;">
+              <label for="f-jobwork-rate-input">Rate agreed for this order (&#8377;/MT)</label>
+              <input type="number" min="0" step="any" id="f-jobwork-rate-input" placeholder="Enter the rate for this order" />
+            </div>
+          </div>
+        </div>
+
+        <div class="card-title" style="margin-top:6px;">Raw material used today</div>
+        <div class="mat-search-row">
+          <input type="text" id="mat-search" placeholder="Search a raw material&hellip;" />
+          <span class="hint">Leave unused materials blank</span>
+          <button type="button" class="btn btn-secondary btn-small" id="btn-show-add-material-inline">+ Add material</button>
+        </div>
+        <div class="inline-add-row" id="add-material-inline" hidden>
+          <input type="text" id="new-mat-name-inline" placeholder="Material name" />
+          <select id="new-mat-unit-inline" class="unit-select">
+            <option value="Kg">Kg</option>
+            <option value="Litre">Litre</option>
+            <option value="Metric Tonne">Metric Tonne</option>
+          </select>
+          <input type="number" id="new-mat-rate-inline" placeholder="Rate &#8377;/unit" min="0" step="any" style="max-width:120px;" />
+          <button type="button" class="btn btn-primary btn-small" id="btn-confirm-add-material-inline">Add</button>
+          <button type="button" class="btn btn-secondary btn-small" id="btn-cancel-add-material-inline">Cancel</button>
+        </div>
+        <div id="material-grid"></div>
+
+        <div class="labour-row" id="f-labour-row">
+          <div class="field">
+            <label for="f-operators">Operators (count)</label>
+            <input type="number" min="0" step="1" id="f-operators" placeholder="0" />
+          </div>
+          <div class="field">
+            <label for="f-loadmen">Loadmen (count)</label>
+            <input type="number" min="0" step="1" id="f-loadmen" placeholder="0" />
+          </div>
+        </div>
+        <label style="display:flex; align-items:center; gap:8px; cursor:pointer; margin-top:10px; font-size:.86rem; font-weight:600;">
+          <input type="checkbox" id="f-use-daylabour" style="width:auto;" />
+          Same crew across today's batches &mdash; split labour cost by output instead
+        </label>
+        <div class="labour-row" id="f-daylabour-row" hidden style="margin-top:8px;">
+          <div class="field">
+            <label for="f-daylabour-operators">Today's total operators</label>
+            <input type="number" min="0" step="1" id="f-daylabour-operators" placeholder="0" />
+          </div>
+          <div class="field">
+            <label for="f-daylabour-loadmen">Today's total loadmen</label>
+            <input type="number" min="0" step="1" id="f-daylabour-loadmen" placeholder="0" />
+          </div>
+        </div>
+        <p class="hint" id="f-daylabour-hint" hidden style="margin-top:6px;">Enter the whole day's crew once, on any one of today's batches &mdash; each batch's labour cost is then split in proportion to its own output across every batch logged today that also uses this (a batch with its own labour rate override, by product or job-work company, is left out of the split and keeps that rate).</p>
+        <div class="field wide" style="margin-top:12px;">
+          <label for="f-remarks">Remarks (optional)</label>
+          <textarea id="f-remarks" placeholder="Anything the office should know about this batch"></textarea>
+        </div>
+      </div>
+
+      <div>
+        <div class="card summary-card">
+          <div id="cost-details-block">
+            <div class="card-title">This batch&rsquo;s cost</div>
+            <div class="summary-row"><span class="k">Raw material cost</span><span class="v" id="sum-rm">&#8377;0.00</span></div>
+            <div class="summary-row"><span class="k">Processing cost</span><span class="v" id="sum-processing">&#8377;0.00</span></div>
+            <div class="summary-row"><span class="k">Labour cost</span><span class="v" id="sum-labour">&#8377;0.00</span></div>
+            <div class="summary-total"><span class="k">Total cost</span><span class="v" id="sum-total">&#8377;0.00</span></div>
+            <div class="summary-cpk">
+              <div class="v" id="sum-cpk">&mdash;</div>
+              <div class="k">Cost per Kg</div>
+            </div>
+            <div class="summary-row" id="f-jw-revenue-row" hidden style="margin-top:8px;"><span class="k">Job work revenue</span><span class="v" id="sum-jw-revenue">&#8377;0.00</span></div>
+            <div class="summary-cpk" id="f-jw-profit-box" hidden>
+              <div class="v" id="sum-jw-profit">&#8377;0.00</div>
+              <div class="k">Profit / loss</div>
+            </div>
+            <p class="hint" id="f-jw-no-rate-hint" hidden style="margin-top:8px;"></p>
+          </div>
+          <div id="sum-mat-count">0 materials used</div>
+          <button class="btn btn-primary" id="btn-submit">Save batch</button>
+        </div>
+
+        <div class="card" style="margin-top:16px;">
+          <div class="card-title-row">
+            <div class="card-title" id="today-list-label" style="margin:0;">Batches logged today</div>
+            <select id="date-jump" class="unit-select" style="max-width:220px;"></select>
+          </div>
+          <div id="today-list"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ REPORTS ============ -->
+  <section class="view" id="view-reports">
+    <div class="view-header">
+      <h2>📊 Production reports</h2>
+      <p>Review batches, cost, and output across any date range or a single product.</p>
+    </div>
+
+    <div class="card">
+      <div class="filter-row">
+        <div class="field">
+          <label for="rep-start">From</label>
+          <input type="date" id="rep-start" />
+        </div>
+        <div class="field">
+          <label for="rep-end">To</label>
+          <input type="date" id="rep-end" />
+        </div>
+        <div class="field">
+          <label for="rep-product">Product</label>
+          <select id="rep-product"></select>
+        </div>
+        <div class="field">
+          <label for="rep-company">Company</label>
+          <select id="rep-company"></select>
+        </div>
+        <button class="btn btn-secondary btn-small" id="rep-preset-month">This month</button>
+        <button class="btn btn-secondary btn-small" id="rep-preset-all">All time</button>
+      </div>
+
+      <div class="tiles">
+        <div class="tile"><div class="tk">Batches</div><div class="tv" id="tile-batches">0</div></div>
+        <div class="tile"><div class="tk">Total output</div><div class="tv" id="tile-output">0 MT</div></div>
+        <div class="tile"><div class="tk">Total cost</div><div class="tv" id="tile-cost">&#8377;0</div></div>
+        <div class="tile"><div class="tk">Avg cost / Kg</div><div class="tv" id="tile-cpk">&mdash;</div></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="chart-row">
+        <div>
+          <div class="card-title">Output by product (MT)</div>
+          <div id="chart-output"></div>
+        </div>
+        <div>
+          <div class="card-title">Total cost by product (&#8377;)</div>
+          <div id="chart-cost"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Individual production report &mdash; by product</div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Product</th><th class="num">Batches</th><th class="num">Output (MT)</th>
+              <th class="num">Total cost</th><th class="num">Avg cost/Kg</th>
+            </tr>
+          </thead>
+          <tbody id="product-report-body"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title-row">
+        <div class="card-title" style="margin:0;">Batch log</div>
+        <div class="download-row">
+          <button class="btn btn-secondary btn-small" id="btn-download-csv">Download CSV</button>
+          <button class="btn btn-secondary btn-small" id="btn-download-xlsx">Download Excel</button>
+          <button class="btn btn-secondary btn-small" id="btn-download-pdf">Download PDF</button>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Date</th><th>Product</th><th>Job work company</th><th class="num">Output (MT)</th><th class="num">RM cost</th>
+              <th class="num">Processing</th><th class="num">Labour</th><th class="num">Total cost</th>
+              <th class="num">Revenue</th><th class="num">Profit/Loss</th><th class="num">Cost/Kg</th><th></th>
+            </tr>
+          </thead>
+          <tbody id="batch-log-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ STOCK ============ -->
+  <section class="view" id="view-stock">
+    <div class="view-header">
+      <h2>📦 Finished goods stock</h2>
+      <p>Opening stock plus what was produced, minus what was dispatched, gives the closing stock. All quantities on this page are in Metric Tonnes (MT).</p>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Add / update a stock entry</div>
+      <div class="field-row">
+        <div class="field">
+          <label for="st-date">Date</label>
+          <input type="date" id="st-date" />
+        </div>
+        <div class="field">
+          <label for="st-product">Product</label>
+          <select id="st-product"></select>
+        </div>
+        <div class="field">
+          <label for="st-opening">Opening stock (MT)</label>
+          <input type="number" min="0" step="any" id="st-opening" placeholder="0" />
+          <p class="hint" id="st-opening-hint" style="margin-top:4px;"></p>
+        </div>
+        <div class="field">
+          <label for="st-dispatched">Dispatched / sold (MT)</label>
+          <input type="number" min="0" step="any" id="st-dispatched" placeholder="0" />
+        </div>
+      </div>
+      <div class="field-row" style="margin-top:-6px;">
+        <div class="field wide">
+          <label for="st-company">Company (optional)</label>
+          <select id="st-company"></select>
+          <p class="hint" style="margin-top:6px;">Leave as &ldquo;Regular stock/dispatch&rdquo; for ordinary sales. Pick a job work company to track that company&rsquo;s own opening, production and dispatch separately &mdash; batches logged for that company fill in Produced automatically; enter Dispatched here to carry into that company&rsquo;s next opening balance.</p>
+        </div>
+      </div>
+      <div class="rate-readout" id="st-closing-preview" hidden style="margin-bottom:10px;">Closing stock after this: &#8212;</div>
+      <button class="btn btn-primary" id="btn-stock-save" style="max-width:240px;">Save stock entry</button>
+    </div>
+
+    <div class="card">
+      <div class="card-title-row">
+        <div class="card-title" style="margin:0;">Stock ledger</div>
+        <div class="field" style="max-width:180px;">
+          <label for="st-filter-date">Date</label>
+          <select id="st-filter-date"></select>
+        </div>
+        <div class="field" style="max-width:200px;">
+          <label for="st-filter-product">Product</label>
+          <select id="st-filter-product"></select>
+        </div>
+        <div class="field" style="max-width:220px;">
+          <label for="st-filter-company">Company</label>
+          <select id="st-filter-company"></select>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Date</th><th>Product</th><th>Company</th><th class="num">Opening (MT)</th><th class="num">Produced (MT)</th>
+              <th class="num">Dispatched (MT)</th><th class="num">Closing (MT)</th><th></th>
+            </tr>
+          </thead>
+          <tbody id="stock-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ JOB WORK ============ -->
+  <section class="view" id="view-jobwork">
+    <div class="view-header">
+      <h2>🤝 Job work companies</h2>
+      <p>Set up contract companies &amp; their fixed job-work rates here, then log the actual batch from the <strong>Log Batch</strong> tab &mdash; just pick &ldquo;Job work for&rdquo; there. Profit or loss below updates automatically from that batch&rsquo;s own logged cost.</p>
+    </div>
+
+    <div class="card">
+      <div class="card-title-row">
+        <div class="card-title" style="margin:0;">Companies &amp; rates (&#8377; per MT)</div>
+      </div>
+      <div class="table-wrap max-scroll">
+        <table>
+          <thead><tr><th>Company</th><th>Rate type</th><th>Product</th><th>Notes</th><th>Linked Log Batch product</th><th class="num">Rate (&#8377;/MT)</th></tr></thead>
+          <tbody id="jw-companies-body"></tbody>
+        </table>
+      </div>
+      <div id="jw-admin-tools">
+        <p class="hint" style="margin:2px 0 10px;">Link each product to a Log Batch product (add it under Settings first if it doesn&rsquo;t exist yet) &mdash; that&rsquo;s what lets the Log Batch tab recognise it and calculate profit/loss automatically.</p>
+        <div class="btn-row">
+          <button class="btn btn-secondary btn-small" id="jw-btn-save-rates">Save rate &amp; link changes</button>
+        </div>
+        <div class="add-item-row" id="jw-add-company-row" hidden>
+          <input type="text" id="jw-new-company-name" placeholder="Company name" />
+          <button class="btn btn-primary btn-small" id="jw-btn-confirm-add-company">Add company</button>
+          <button class="btn btn-secondary btn-small" id="jw-btn-cancel-add-company">Cancel</button>
+        </div>
+        <div class="add-item-row" id="jw-add-product-row" hidden>
+          <select id="jw-new-product-company" style="min-width:160px;"></select>
+          <select id="jw-new-product-link" style="min-width:200px;"></select>
+          <input type="number" id="jw-new-product-rate" placeholder="Rate &#8377;/MT" min="0" step="any" style="max-width:120px;" />
+          <input type="text" id="jw-new-product-note" placeholder="Notes (optional, e.g. mix ratio)" style="min-width:180px;" />
+          <button class="btn btn-primary btn-small" id="jw-btn-confirm-add-product">Add product</button>
+          <button class="btn btn-secondary btn-small" id="jw-btn-cancel-add-product">Cancel</button>
+        </div>
+        <div class="btn-row">
+          <button class="btn btn-secondary btn-small" id="jw-btn-show-add-company">+ Add company</button>
+          <button class="btn btn-secondary btn-small" id="jw-btn-show-add-product">+ Add product</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="filter-row">
+        <div class="field">
+          <label for="jw-rep-start">From</label>
+          <input type="date" id="jw-rep-start" />
+        </div>
+        <div class="field">
+          <label for="jw-rep-end">To</label>
+          <input type="date" id="jw-rep-end" />
+        </div>
+        <div class="field">
+          <label for="jw-rep-company">Company</label>
+          <select id="jw-rep-company"></select>
+        </div>
+        <button class="btn btn-secondary btn-small" id="jw-rep-preset-month">This month</button>
+        <button class="btn btn-secondary btn-small" id="jw-rep-preset-all">All time</button>
+      </div>
+      <div class="tiles">
+        <div class="tile"><div class="tk">Batches</div><div class="tv" id="jw-tile-batches">0</div></div>
+        <div class="tile"><div class="tk">Total output</div><div class="tv" id="jw-tile-output">0 MT</div></div>
+        <div class="tile"><div class="tk">Revenue</div><div class="tv" id="jw-tile-revenue">&#8377;0</div></div>
+        <div class="tile"><div class="tk">Profit / loss</div><div class="tv" id="jw-tile-profit">&#8377;0</div></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Profit &amp; loss by company</div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Company</th><th class="num">Batches</th><th class="num">Output (MT)</th><th class="num">Revenue</th><th class="num">Actual cost</th><th class="num">Profit/Loss</th></tr></thead>
+          <tbody id="jw-company-report-body"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Day-by-day profit &amp; loss</div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Date</th><th class="num">Batches</th><th class="num">Output (MT)</th><th class="num">Revenue</th><th class="num">Actual cost</th><th class="num">Profit/Loss</th></tr></thead>
+          <tbody id="jw-daily-report-body"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Job work batch log</div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Date</th><th>Company</th><th>Product</th><th class="num">Output (MT)</th>
+              <th class="num">Revenue</th><th class="num">Actual cost</th><th class="num">Profit/Loss</th><th></th>
+            </tr>
+          </thead>
+          <tbody id="jw-batch-log-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ SETTINGS ============ -->
+  <section class="view" id="view-settings">
+    <div class="view-header">
+      <h2>⚙️ Settings</h2>
+      <p>Raw material rates, labour wages and the processing cost used to calculate every batch.</p>
+    </div>
+
+    <div class="settings-grid">
+      <div class="card">
+        <div class="card-title">Raw material rates (&#8377; per unit)</div>
+        <div class="table-wrap max-scroll">
+          <table>
+            <thead><tr><th>Material</th><th>Unit</th><th class="num">Rate</th></tr></thead>
+            <tbody id="settings-materials-body"></tbody>
+          </table>
+        </div>
+        <p class="hint" style="margin-top:8px;">Change a material's unit anytime &mdash; it saves right away.</p>
+        <div class="add-item-row" id="add-material-row" hidden>
+          <input type="text" id="new-mat-name" placeholder="Material name" />
+          <select id="new-mat-unit" class="unit-select">
+            <option value="Kg">Kg</option>
+            <option value="Litre">Litre</option>
+            <option value="Metric Tonne">Metric Tonne</option>
+          </select>
+          <input type="number" id="new-mat-rate" placeholder="Rate &#8377;/unit" min="0" step="any" style="max-width:120px;" />
+          <button class="btn btn-primary btn-small" id="btn-confirm-add-material">Add</button>
+          <button class="btn btn-secondary btn-small" id="btn-cancel-add-material">Cancel</button>
+        </div>
+        <div class="btn-row">
+          <button class="btn btn-secondary btn-small" id="btn-show-add-material">+ Add material</button>
+          <button class="btn btn-primary" id="btn-save-rates">Save rates</button>
+        </div>
+      </div>
+
+      <div>
+        <div class="card">
+          <div class="card-title">Labour &amp; processing cost</div>
+          <div class="field-row" style="grid-template-columns:1fr;">
+            <div class="field">
+              <label for="s-operator-rate">Operator daily wage (&#8377;)</label>
+              <input type="number" min="0" step="any" id="s-operator-rate" />
+            </div>
+            <div class="field">
+              <label for="s-loadman-rate">Loadman daily wage (&#8377;)</label>
+              <input type="number" min="0" step="any" id="s-loadman-rate" />
+            </div>
+            <div class="field">
+              <label for="s-processing-cost">Fallback processing cost per batch (&#8377;)</label>
+              <input type="number" min="0" step="any" id="s-processing-cost" />
+            </div>
+          </div>
+          <p class="hint" style="margin-top:4px;">Used for any product that doesn&rsquo;t have its own fallback cost below. Auto-synced to the breakdown&rsquo;s &#8377;/MT rate further down once that&rsquo;s set up (only kicks in as a flat fallback when no budgeted monthly output is entered).</p>
+          <button class="btn btn-primary" id="btn-save-labour">Save settings</button>
+        </div>
+
+        <div class="card" style="margin-top:16px;">
+          <div class="card-title">Fallback processing cost by product (&#8377;/batch)</div>
+          <p class="hint">Different products don&rsquo;t cost the same to process even on the same machinery. Pick a product to set its own fallback cost &mdash; it overrides the default above (and the breakdown&rsquo;s &#8377;/MT rate) for that product&rsquo;s batches. Leave a product without one and it keeps using the default.</p>
+          <div class="field-row" style="grid-template-columns:1fr 1fr;">
+            <div class="field">
+              <label for="s-fallback-product">Product</label>
+              <select id="s-fallback-product"></select>
+            </div>
+            <div class="field">
+              <label for="s-fallback-product-cost">Fallback processing cost for this product (&#8377;)</label>
+              <input type="number" min="0" step="any" id="s-fallback-product-cost" placeholder="Using the default above" />
+            </div>
+          </div>
+          <div class="btn-row">
+            <button class="btn btn-primary btn-small" id="btn-save-fallback-product">Save for this product</button>
+            <button class="btn btn-secondary btn-small" id="btn-clear-fallback-product">Clear override</button>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top:16px;">
+          <div class="card-title">Labour cost by product (&#8377;/batch)</div>
+          <p class="hint">Some products take more labour to handle than others. Pick a product to set its own flat labour cost &mdash; it replaces the operator/loadman-count calculation above for that product&rsquo;s batches. Leave a product without one and it keeps using the daily-wage calculation.</p>
+          <div class="field-row" style="grid-template-columns:1fr 1fr;">
+            <div class="field">
+              <label for="s-labour-product">Product</label>
+              <select id="s-labour-product"></select>
+            </div>
+            <div class="field">
+              <label for="s-labour-product-cost">Labour cost for this product (&#8377;)</label>
+              <input type="number" min="0" step="any" id="s-labour-product-cost" placeholder="Using operator/loadman wages" />
+            </div>
+          </div>
+          <div class="btn-row">
+            <button class="btn btn-primary btn-small" id="btn-save-labour-product">Save for this product</button>
+            <button class="btn btn-secondary btn-small" id="btn-clear-labour-product">Clear override</button>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top:16px;">
+          <div class="card-title">Labour cost by company (&#8377;/MT)</div>
+          <p class="hint">A job work client&rsquo;s contract can mean different labour handling too. Pick a company to set its own labour rate per metric tonne of output &mdash; it&rsquo;s multiplied by each batch&rsquo;s output and overrides both the daily-wage calculation and any product override above for batches tagged to that company. Leave a company without one and it keeps using whichever of those applies.</p>
+          <div class="field-row" style="grid-template-columns:1fr 1fr;">
+            <div class="field">
+              <label for="s-labour-company">Company</label>
+              <select id="s-labour-company"></select>
+            </div>
+            <div class="field">
+              <label for="s-labour-company-cost">Labour cost for this company (&#8377;/MT)</label>
+              <input type="number" min="0" step="any" id="s-labour-company-cost" placeholder="Using product/default" />
+            </div>
+          </div>
+          <div class="btn-row">
+            <button class="btn btn-primary btn-small" id="btn-save-labour-company">Save for this company</button>
+            <button class="btn btn-secondary btn-small" id="btn-clear-labour-company">Clear override</button>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top:16px;">
+          <div class="card-title">Processing cost breakdown (&#8377; per month)</div>
+          <p class="hint">Enter each monthly expense once. Divided by your budgeted monthly output, this gives a &#8377;/MT processing-cost rate that&rsquo;s applied to every batch based on its own MT output. Saving here also copies this rate into the &ldquo;Fallback processing cost per batch&rdquo; field above, so the two always match.</p>
+          <div class="field-row" style="grid-template-columns:1fr 1fr;">
+            <div class="field">
+              <label for="s-eb-cost">EB (electricity) cost</label>
+              <input type="number" min="0" step="any" id="s-eb-cost" />
+            </div>
+            <div class="field">
+              <label for="s-fuel-cost">Fuel cost</label>
+              <input type="number" min="0" step="any" id="s-fuel-cost" />
+            </div>
+            <div class="field">
+              <label for="s-maintenance-cost">Maintenance cost</label>
+              <input type="number" min="0" step="any" id="s-maintenance-cost" />
+            </div>
+            <div class="field">
+              <label for="s-electrical-maintenance-cost">Electrical maintenance cost</label>
+              <input type="number" min="0" step="any" id="s-electrical-maintenance-cost" />
+            </div>
+            <div class="field">
+              <label for="s-stitching-expense">Stitching expense</label>
+              <input type="number" min="0" step="any" id="s-stitching-expense" />
+            </div>
+            <div class="field">
+              <label for="s-sack-expenses">Sack expenses</label>
+              <input type="number" min="0" step="any" id="s-sack-expenses" />
+            </div>
+            <div class="field">
+              <label for="s-department-expenses">Department expenses</label>
+              <input type="number" min="0" step="any" id="s-department-expenses" />
+            </div>
+            <div class="field">
+              <label for="s-staff-salaries">Staff expenses (total salaries)</label>
+              <input type="number" min="0" step="any" id="s-staff-salaries" />
+            </div>
+          </div>
+          <div class="field" style="max-width:280px; margin-top:4px;">
+            <label for="s-budgeted-output-mt">Budgeted monthly output (MT)</label>
+            <input type="number" min="0" step="any" id="s-budgeted-output-mt" placeholder="e.g. 300" />
+          </div>
+          <div class="summary-row" style="margin-top:12px;"><span class="k">Monthly total</span><span class="v" id="proc-monthly-total">&#8377;0</span></div>
+          <div class="summary-row"><span class="k">Rate applied per batch</span><span class="v" id="proc-per-mt-rate">Not set up &mdash; using fallback</span></div>
+          <button class="btn btn-primary" id="btn-save-processing-breakdown" style="margin-top:8px;">Save breakdown</button>
+        </div>
+
+        <div class="card" style="margin-top:16px;">
+          <div class="card-title">Access control</div>
+          <p class="hint">Set the shared passwords used to unlock the app. Team members only see Log Batch &amp; Stock &mdash; no costs, rates or Reports. Leave a field blank to keep that password unchanged.</p>
+          <div class="field-row" style="grid-template-columns:1fr 1fr;">
+            <div class="field">
+              <label for="s-admin-password">New admin password</label>
+              <input type="password" id="s-admin-password" autocomplete="new-password" placeholder="Leave blank to keep current" />
+            </div>
+            <div class="field">
+              <label for="s-team-password">New team password</label>
+              <input type="password" id="s-team-password" autocomplete="new-password" placeholder="Leave blank to keep current" />
+            </div>
+          </div>
+          <button class="btn btn-primary" id="btn-save-access">Update passwords</button>
+        </div>
+
+        <div class="card" style="margin-top:16px;">
+          <div class="card-title">Products</div>
+          <div class="table-wrap max-scroll">
+            <table>
+              <thead><tr><th>Product</th><th>Unit</th><th>Fallback processing cost</th><th>Labour cost</th></tr></thead>
+              <tbody id="settings-products-body"></tbody>
+            </table>
+          </div>
+          <p class="hint" style="margin-top:8px;">Change a product's unit anytime &mdash; it saves right away.</p>
+          <div class="add-item-row" id="add-product-row" hidden>
+            <input type="text" id="new-prod-name" placeholder="Product name" />
+            <select id="new-prod-unit" class="unit-select">
+              <option value="Kg">Kg</option>
+              <option value="Litre">Litre</option>
+              <option value="Metric Tonne">Metric Tonne</option>
+            </select>
+            <button class="btn btn-primary btn-small" id="btn-confirm-add-product">Add</button>
+            <button class="btn btn-secondary btn-small" id="btn-cancel-add-product">Cancel</button>
+          </div>
+          <button class="btn btn-secondary btn-small" id="btn-show-add-product" style="margin-top:12px;">+ Add product</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+</div>
+
+<div class="modal-overlay" id="view-modal" hidden>
+  <div class="modal-card">
+    <div class="modal-head">
+      <div class="card-title" id="view-modal-title">Batch details</div>
+      <button type="button" class="icon-btn" id="btn-close-view" title="Close">&#10005;</button>
+    </div>
+    <div id="view-modal-body"></div>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-secondary btn-small" id="btn-view-close">Close</button>
+      <button type="button" class="btn btn-primary btn-small" id="btn-view-edit">Edit this batch</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast-host"></div>
+</div>
+
+<!-- Firebase (compat SDK) — shared live database, no Claude account needed -->
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore-compat.js"></script>
+<script src="firebase-config.js?v=1"></script>
+<!-- Export libraries: Excel (SheetJS) and PDF (jsPDF + autotable) for the Reports download buttons -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
+<script src="app.js?v=28"></script>
+</body>
+</html>
