@@ -436,3 +436,6 @@ td.strong { font-weight: 700; }
 #f-jw-profit-box.pl-negative { background: linear-gradient(135deg, var(--critical-soft), var(--accent-soft)); }
 #f-jw-profit-box.pl-positive .v, #f-jw-profit-box.pl-positive .k { color: var(--success); }
 #f-jw-profit-box.pl-negative .v, #f-jw-profit-box.pl-negative .k { color: var(--critical); }
+
+/* The hidden attribute always wins over a class display rule (role-based tabs, filters, cards). */
+[hidden] { display: none !important; }

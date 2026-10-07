@@ -11,7 +11,7 @@
 <!-- Cache-busting: GitHub Pages caches these for 10 minutes (Cache-Control: max-age=600).
      Bump the ?v= number on app.js, style.css and firebase-config.js below every time
      any of those files are redeployed, so users don't keep running a stale cached copy. -->
-<link rel="stylesheet" href="style.css?v=11" />
+<link rel="stylesheet" href="style.css?v=12" />
 </head>
 <body>
 
@@ -296,10 +296,10 @@
   <section class="view" id="view-stock">
     <div class="view-header">
       <h2>📦 Finished goods stock</h2>
-      <p>Opening stock plus what was produced, minus what was dispatched, gives the closing stock. All quantities on this page are in Metric Tonnes (MT).</p>
+      <p id="stock-intro">Opening stock plus what was produced, minus what was dispatched, gives the closing stock. All quantities on this page are in Metric Tonnes (MT).</p>
     </div>
 
-    <div class="card">
+    <div class="card" id="stock-entry-card">
       <div class="card-title">Add / update a stock entry</div>
       <div class="field-row">
         <div class="field">
@@ -342,7 +342,7 @@
           <label for="st-filter-product">Product</label>
           <select id="st-filter-product"></select>
         </div>
-        <div class="field" style="max-width:220px;">
+        <div class="field" style="max-width:220px;" id="st-filter-company-field">
           <label for="st-filter-company">Company</label>
           <select id="st-filter-company"></select>
         </div>
@@ -351,7 +351,7 @@
         <table>
           <thead>
             <tr>
-              <th>Date</th><th>Product</th><th>Company</th><th class="num">Opening (MT)</th><th class="num">Produced (MT)</th>
+              <th>Date</th><th>Product</th><th id="stock-col-company">Company</th><th class="num">Opening (MT)</th><th class="num">Produced (MT)</th>
               <th class="num">Dispatched (MT)</th><th class="num">Closing (MT)</th><th></th>
             </tr>
           </thead>
@@ -636,6 +636,24 @@
             </div>
           </div>
           <button class="btn btn-primary" id="btn-save-access">Update passwords</button>
+
+          <div class="card-title" style="margin-top:20px;">Job work company logins</div>
+          <p class="hint">Give each job work company its own password. When they log in with it they see <strong>only the Stock tab, showing only their own stock</strong> (opening, produced, dispatched, closing) &mdash; no batches, costs, rates, other companies or Settings, and they can&rsquo;t change anything.</p>
+          <div class="field-row" style="grid-template-columns:1fr 1fr;">
+            <div class="field">
+              <label for="s-company-access-company">Company</label>
+              <select id="s-company-access-company"></select>
+            </div>
+            <div class="field">
+              <label for="s-company-access-password">New password for this company</label>
+              <input type="password" id="s-company-access-password" autocomplete="new-password" placeholder="At least 6 characters" />
+            </div>
+          </div>
+          <div style="display:flex; gap:8px; flex-wrap:wrap;">
+            <button class="btn btn-primary" id="btn-save-company-access">Save company login</button>
+            <button class="btn btn-secondary" id="btn-remove-company-access">Remove login</button>
+          </div>
+          <ul id="company-access-list" class="hint" style="margin:12px 0 0; padding-left:18px;"></ul>
         </div>
 
         <div class="card" style="margin-top:16px;">
@@ -690,6 +708,6 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
-<script src="app.js?v=28"></script>
+<script src="app.js?v=29"></script>
 </body>
 </html>

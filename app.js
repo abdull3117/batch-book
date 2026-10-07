@@ -169,6 +169,12 @@
     teamHash: "e672b7f6c2f08d00452e72d9cff3fd5ef19130c7270ec854f10c8d6a3b96b45d",
   };
   const ROLE_STORAGE_KEY = "bb_role";
+  // Third role: a job-work company (SFL, Rajshree, SKY WIN…) logging in
+  // with its own password sees ONLY the Stock tab, locked to its own
+  // company's rows — no batches, costs, rates, other companies or
+  // Settings. Hashes live in settings/access as companyHashes[companyId].
+  // Stored in sessionStorage as "company:<companyId>".
+  const COMPANY_ROLE_PREFIX = "company:";
   // Tabs a "team" role cannot see — they show costs, rates and wages.
   const ADMIN_ONLY_TABS = ["settings"];
 
@@ -187,7 +193,8 @@
     products: DEFAULT_PRODUCTS.slice(),
     labour: Object.assign({}, DEFAULT_LABOUR),
     access: Object.assign({}, DEFAULT_ACCESS),
-    role: null, // "admin" | "team" | null (locked)
+    role: null, // "admin" | "team" | "company" | null (locked)
+    companyId: "", // set only for the "company" role — the one company it may see
     entries: [],
     stock: [],
     dayLabour: {}, // date -> { operators, loadmen } — the shared day-crew doc, cached per date as it's loaded
@@ -801,7 +808,11 @@
           state.access = {
             adminHash: data.adminHash || DEFAULT_ACCESS.adminHash,
             teamHash: data.teamHash || DEFAULT_ACCESS.teamHash,
+            companyHashes: (data.companyHashes && typeof data.companyHashes === "object") ? data.companyHashes : {},
           };
+          renderCompanyAccessList();
+          // A company whose password was removed/changed is signed out.
+          if (state.role === "company" && !state.access.companyHashes[state.companyId]) lockApp();
         } else {
           // First time the app has ever run — seed the doc with the
           // default passwords so they can be changed from Settings.
@@ -852,8 +863,14 @@
     try {
       const hash = await sha256Hex(pw);
       let role = null;
+      let companyId = "";
       if (hash === state.access.adminHash) role = "admin";
       else if (hash === state.access.teamHash) role = "team";
+      else {
+        const hashes = state.access.companyHashes || {};
+        companyId = Object.keys(hashes).find((id) => hashes[id] === hash) || "";
+        if (companyId) role = "company";
+      }
       if (!role) {
         lockScreenError("Incorrect password. Try again.");
         input.value = "";
@@ -862,8 +879,8 @@
       }
       lockScreenError(null);
       input.value = "";
-      try { sessionStorage.setItem(ROLE_STORAGE_KEY, role); } catch (e) { /* ignore */ }
-      applyRole(role);
+      try { sessionStorage.setItem(ROLE_STORAGE_KEY, role === "company" ? COMPANY_ROLE_PREFIX + companyId : role); } catch (e) { /* ignore */ }
+      applyRole(role, companyId);
     } finally {
       btn.disabled = false;
       btn.textContent = "Unlock";
@@ -873,6 +890,7 @@
   function lockApp() {
     try { sessionStorage.removeItem(ROLE_STORAGE_KEY); } catch (e) { /* ignore */ }
     state.role = null;
+    state.companyId = "";
     $("#app").hidden = true;
     $("#lock-screen").hidden = false;
     $("#lock-password").value = "";
@@ -882,35 +900,59 @@
   // Applies role-based visibility: team members can log batches, see
   // stock quantities, and view full Reports (including costs); only
   // Settings (rates, wages, access control) stays admin-only.
-  function applyRole(role) {
+  function applyRole(role, companyId) {
     state.role = role;
+    state.companyId = role === "company" ? (companyId || "") : "";
     $("#lock-screen").hidden = true;
     $("#app").hidden = false;
 
+    const isCompany = role === "company";
+    const company = isCompany ? jobCompanyById(state.companyId) : null;
     const badge = $("#role-badge");
     const logoutBtn = $("#btn-logout");
     if (badge) {
       badge.hidden = false;
-      badge.textContent = role === "admin" ? "Admin view" : "Team view";
+      badge.textContent = role === "admin" ? "Admin view"
+        : isCompany ? ((company ? company.name : "Company") + " · stock view")
+        : "Team view";
       badge.className = "role-badge" + (role === "admin" ? " admin" : "");
     }
     if (logoutBtn) logoutBtn.hidden = false;
 
     const isTeam = role === "team";
-    const settingsTab = $("#tab-btn-settings");
-    if (settingsTab) settingsTab.hidden = isTeam;
+    // Company logins see only the Stock tab; every other tab is hidden.
+    $all(".tab-btn").forEach((b) => {
+      if (isCompany) b.hidden = b.dataset.tab !== "stock";
+      else b.hidden = (b.dataset.tab === "settings" && isTeam);
+    });
     const costBlock = $("#cost-details-block");
-    if (costBlock) costBlock.hidden = isTeam;
+    if (costBlock) costBlock.hidden = isTeam || isCompany;
     // Job work rates can be viewed by anyone, but only admin can add
     // companies/products or change a rate.
     const jwAdminTools = $("#jw-admin-tools");
-    if (jwAdminTools) jwAdminTools.hidden = isTeam;
+    if (jwAdminTools) jwAdminTools.hidden = role !== "admin";
+    // Stock tab: a company can only read its own ledger — no entry form,
+    // no company picker, no company column.
+    const stockForm = $("#stock-entry-card");
+    if (stockForm) stockForm.hidden = isCompany;
+    const coFilter = $("#st-filter-company-field");
+    if (coFilter) coFilter.hidden = isCompany;
+    const coCol = $("#stock-col-company");
+    if (coCol) coCol.hidden = isCompany;
+    const stockIntro = $("#stock-intro");
+    if (stockIntro) {
+      stockIntro.textContent = isCompany
+        ? "Your stock with us: opening stock plus what was produced for you, minus what was dispatched, gives the closing stock. All quantities are in Metric Tonnes (MT)."
+        : "Opening stock plus what was produced, minus what was dispatched, gives the closing stock. All quantities on this page are in Metric Tonnes (MT).";
+    }
 
+    if (isCompany) switchTab("stock");
     // If a team member was mid-way on an admin-only tab (or is being
     // switched down from admin), bounce them back to Log Batch.
-    if (isTeam && ADMIN_ONLY_TABS.indexOf(state.activeTab) !== -1) switchTab("entry");
+    else if (isTeam && ADMIN_ONLY_TABS.indexOf(state.activeTab) !== -1) switchTab("entry");
     renderTodayList();
     renderJobCompanies();
+    renderStock();
   }
 
   // ---------------------------------------------------------------
@@ -918,6 +960,7 @@
   // ---------------------------------------------------------------
   function switchTab(tab) {
     if (state.role === "team" && ADMIN_ONLY_TABS.indexOf(tab) !== -1) return;
+    if (state.role === "company" && tab !== "stock") return;
     state.activeTab = tab;
     $all(".tab-btn").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
     $all(".view").forEach((v) => v.classList.toggle("active", v.id === "view-" + tab));
@@ -1771,6 +1814,14 @@
       state.jobworkCompanies.forEach((c) => stFilterSel.appendChild(el("option", { value: c.id }, [c.name])));
       if (cur) stFilterSel.value = cur;
     }
+    const accessSel = $("#s-company-access-company");
+    if (accessSel) {
+      const cur = accessSel.value;
+      accessSel.innerHTML = "";
+      state.jobworkCompanies.forEach((c) => accessSel.appendChild(el("option", { value: c.id }, [c.name])));
+      if (cur) accessSel.value = cur;
+    }
+    renderCompanyAccessList();
     populateLabourCompanySelect();
   }
 
@@ -2351,7 +2402,12 @@
     if (!$("#view-stock")) return;
     const body = $("#stock-body");
     body.innerHTML = "";
-    const filterCompany = $("#st-filter-company") ? $("#st-filter-company").value : "";
+    const isCompany = state.role === "company";
+    // A company login is always pinned to its own company — whatever the
+    // (hidden) company filter says. With no company id, show nothing.
+    const filterCompany = isCompany
+      ? (state.companyId || "__none__")
+      : ($("#st-filter-company") ? $("#st-filter-company").value : "");
     const filterProduct = $("#st-filter-product") ? $("#st-filter-product").value : "";
 
     // Build the full set of (date, product, company) buckets that have
@@ -2362,6 +2418,7 @@
     state.products.forEach((p) => {
       stockBucketsFor(p.id).forEach((b) => buckets.push({ productId: p.id, date: b.date, companyId: b.companyId, companyName: b.companyName }));
     });
+    if (isCompany) buckets = buckets.filter((b) => b.companyId === filterCompany);
 
     // Date filter dropdown — every distinct date that has a stock bucket
     // for ANY company/product, newest first, independent of whichever
@@ -2383,7 +2440,7 @@
     if (filterProduct) buckets = buckets.filter((b) => b.productId === filterProduct);
     buckets = buckets.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0)).slice(0, 200);
     if (!buckets.length) {
-      body.appendChild(el("tr", {}, [el("td", { colspan: "8", class: "empty-hint" }, ["No stock entries yet."])]));
+      body.appendChild(el("tr", {}, [el("td", { colspan: isCompany ? "7" : "8", class: "empty-hint" }, ["No stock entries yet."])]));
       return;
     }
     buckets.forEach((b) => {
@@ -2396,11 +2453,13 @@
       // bucket that exists purely because a batch was tagged here has no
       // doc of its own; delete the batch itself (Log Batch or Reports)
       // to remove that instead.
-      const existingDoc = stockRowFor(b.date, b.productId, b.companyId);
+      const existingDoc = isCompany ? null : stockRowFor(b.date, b.productId, b.companyId);
+      const companyCell = el("td", {}, [b.companyId ? (b.companyName || b.companyId) : "—"]);
+      if (isCompany) companyCell.hidden = true;
       body.appendChild(el("tr", {}, [
         el("td", {}, [b.date]),
         el("td", {}, [productName(b.productId)]),
-        el("td", {}, [b.companyId ? (b.companyName || b.companyId) : "—"]),
+        companyCell,
         el("td", { class: "num" }, [fmtNum(opening, 2)]),
         el("td", { class: "num" }, [fmtNum(producedMT, 2)]),
         el("td", { class: "num" }, [fmtNum(dispatched, 2)]),
@@ -2596,6 +2655,58 @@
   }
 
   // ---------------------------------------------------------------
+  // Company (job-work) logins — one password per company, admin-managed.
+  // ---------------------------------------------------------------
+  function renderCompanyAccessList() {
+    const list = $("#company-access-list");
+    if (!list) return;
+    const hashes = (state.access && state.access.companyHashes) || {};
+    list.innerHTML = "";
+    if (!state.jobworkCompanies.length) {
+      list.appendChild(el("li", { class: "empty-hint" }, ["No job work companies yet."]));
+      return;
+    }
+    state.jobworkCompanies.forEach((c) => {
+      list.appendChild(el("li", {}, [
+        c.name + " — ",
+        el("strong", {}, [hashes[c.id] ? "login active" : "no login yet"]),
+      ]));
+    });
+  }
+
+  async function saveCompanyPassword(remove) {
+    const companyId = $("#s-company-access-company").value;
+    const company = jobCompanyById(companyId);
+    if (!company) return toast("Pick a company first.", "error");
+    const pw = ($("#s-company-access-password").value || "").trim();
+    const payload = Object.assign({}, state.access);
+    payload.companyHashes = Object.assign({}, state.access.companyHashes || {});
+    if (remove) {
+      if (!payload.companyHashes[companyId]) return toast(company.name + " has no login to remove.", "warn");
+      if (!confirm("Remove " + company.name + "'s login? Anyone using it will be signed out.")) return;
+      delete payload.companyHashes[companyId];
+    } else {
+      if (pw.length < 6) return toast("Use a password of at least 6 characters.", "error");
+      const hash = await sha256Hex(pw);
+      const clash = hash === payload.adminHash || hash === payload.teamHash ||
+        Object.keys(payload.companyHashes).some((id) => id !== companyId && payload.companyHashes[id] === hash);
+      if (clash) return toast("That password is already used by another login — pick a different one.", "error");
+      payload.companyHashes[companyId] = hash;
+    }
+    try {
+      if (state.db) await state.db.doc("settings/access").set(payload);
+      state.access = payload;
+      $("#s-company-access-password").value = "";
+      renderCompanyAccessList();
+      toast(remove
+        ? company.name + "'s login removed."
+        : company.name + " login saved. Send them the app link and this password — they'll see only their own stock.", "success");
+    } catch (e) {
+      toast("Could not save: " + e.message, "error");
+    }
+  }
+
+  // ---------------------------------------------------------------
   // Wire up static DOM events (once)
   // ---------------------------------------------------------------
   function wireEvents() {
@@ -2603,6 +2714,8 @@
     $("#lock-password").addEventListener("keydown", (e) => { if (e.key === "Enter") attemptUnlock(); });
     $("#btn-logout").addEventListener("click", lockApp);
     $("#btn-save-access").addEventListener("click", saveAccessPasswords);
+    if ($("#btn-save-company-access")) $("#btn-save-company-access").addEventListener("click", () => saveCompanyPassword(false));
+    if ($("#btn-remove-company-access")) $("#btn-remove-company-access").addEventListener("click", () => saveCompanyPassword(true));
 
     $all(".tab-btn").forEach((b) => b.addEventListener("click", () => switchTab(b.dataset.tab)));
 
@@ -2881,6 +2994,8 @@
     try { savedRole = sessionStorage.getItem(ROLE_STORAGE_KEY); } catch (e) { /* ignore */ }
     if (savedRole === "admin" || savedRole === "team") {
       applyRole(savedRole);
+    } else if (savedRole && savedRole.indexOf(COMPANY_ROLE_PREFIX) === 0) {
+      applyRole("company", savedRole.slice(COMPANY_ROLE_PREFIX.length));
     } else {
       $("#lock-password").focus();
     }
