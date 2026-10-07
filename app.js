@@ -809,6 +809,10 @@
             adminHash: data.adminHash || DEFAULT_ACCESS.adminHash,
             teamHash: data.teamHash || DEFAULT_ACCESS.teamHash,
             companyHashes: (data.companyHashes && typeof data.companyHashes === "object") ? data.companyHashes : {},
+            // Plain copy of each company password, shown to admin in
+            // Settings so it can be read out/shared again. Admin and team
+            // passwords stay hash-only.
+            companyPasswords: (data.companyPasswords && typeof data.companyPasswords === "object") ? data.companyPasswords : {},
           };
           renderCompanyAccessList();
           // A company whose password was removed/changed is signed out.
@@ -2661,16 +2665,21 @@
     const list = $("#company-access-list");
     if (!list) return;
     const hashes = (state.access && state.access.companyHashes) || {};
+    const passwords = (state.access && state.access.companyPasswords) || {};
     list.innerHTML = "";
     if (!state.jobworkCompanies.length) {
       list.appendChild(el("li", { class: "empty-hint" }, ["No job work companies yet."]));
       return;
     }
     state.jobworkCompanies.forEach((c) => {
-      list.appendChild(el("li", {}, [
-        c.name + " — ",
-        el("strong", {}, [hashes[c.id] ? "login active" : "no login yet"]),
-      ]));
+      const parts = [c.name + " — ", el("strong", {}, [hashes[c.id] ? "login active" : "no login yet"])];
+      if (hashes[c.id]) {
+        parts.push(" · Password: ");
+        parts.push(passwords[c.id]
+          ? el("code", { style: "font-weight:700; padding:1px 6px; border-radius:6px; background:var(--surface-2); user-select:all;" }, [passwords[c.id]])
+          : el("em", {}, ["set before passwords were shown — save it again to display it here"]));
+      }
+      list.appendChild(el("li", {}, parts));
     });
   }
 
@@ -2681,10 +2690,12 @@
     const pw = ($("#s-company-access-password").value || "").trim();
     const payload = Object.assign({}, state.access);
     payload.companyHashes = Object.assign({}, state.access.companyHashes || {});
+    payload.companyPasswords = Object.assign({}, state.access.companyPasswords || {});
     if (remove) {
       if (!payload.companyHashes[companyId]) return toast(company.name + " has no login to remove.", "warn");
       if (!confirm("Remove " + company.name + "'s login? Anyone using it will be signed out.")) return;
       delete payload.companyHashes[companyId];
+      delete payload.companyPasswords[companyId];
     } else {
       if (pw.length < 6) return toast("Use a password of at least 6 characters.", "error");
       const hash = await sha256Hex(pw);
@@ -2692,6 +2703,7 @@
         Object.keys(payload.companyHashes).some((id) => id !== companyId && payload.companyHashes[id] === hash);
       if (clash) return toast("That password is already used by another login — pick a different one.", "error");
       payload.companyHashes[companyId] = hash;
+      payload.companyPasswords[companyId] = pw;
     }
     try {
       if (state.db) await state.db.doc("settings/access").set(payload);
