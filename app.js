@@ -2494,6 +2494,8 @@
   }
 
   function openingFor(date, productId, companyId) {
+    const counted = countFor(date, productId, companyId);
+    if (counted != null) return counted;
     const priorDate = priorDateFor(productId, date, companyId);
     if (priorDate) {
       // A prior day exists for this bucket — opening is ALWAYS derived
@@ -2512,18 +2514,26 @@
   }
   // A physical stock count saved for the day replaces the worked-out
   // closing; the next day carries on from the counted figure.
+  // Stock physically counted at the START of a day becomes that day's
+  // opening; the day's production, transfers and dispatches move it as
+  // usual. The adjustment (count minus the carried-forward figure) is
+  // worked out live, so it shrinks by itself as older dispatches are
+  // filled in.
   function countFor(date, productId, companyId) {
     const row = stockRowFor(date, productId, companyId);
-    return row && row.physicalClosing != null && row.physicalClosing !== "" ? Number(row.physicalClosing) : null;
+    if (!row) return null;
+    const v = row.countedOpening != null && row.countedOpening !== "" ? row.countedOpening : null;
+    return v == null ? null : Number(v);
   }
-  function bookClosingFor(date, productId, companyId) {
-    const opening = openingFor(date, productId, companyId);
-    const producedMT = producedFor(date, productId, companyId) / KG_PER_MT;
-    return opening + producedMT + transferNetFor(date, productId, companyId) - dispatchedFor(date, productId, companyId);
+  function carriedOpeningFor(date, productId, companyId) {
+    const priorDate = priorDateFor(productId, date, companyId);
+    return priorDate ? closingFor(priorDate, productId, companyId) : 0;
+  }
+  function countAdjustmentFor(date, productId, companyId) {
+    const c = countFor(date, productId, companyId);
+    return c == null ? 0 : c - carriedOpeningFor(date, productId, companyId);
   }
   function closingFor(date, productId, companyId) {
-    const counted = countFor(date, productId, companyId);
-    if (counted != null) return counted;
     const opening = openingFor(date, productId, companyId);
     const producedMT = producedFor(date, productId, companyId) / KG_PER_MT;
     return opening + producedMT + transferNetFor(date, productId, companyId) - dispatchedFor(date, productId, companyId);
@@ -2592,7 +2602,7 @@
       }
     }
     $("#st-dispatched").value = existing ? existing.dispatched : "";
-    if ($("#st-count")) $("#st-count").value = existing && existing.physicalClosing != null ? existing.physicalClosing : "";
+    if ($("#st-count")) $("#st-count").value = existing && existing.countedOpening != null ? existing.countedOpening : "";
     updateStockClosingPreview();
   }
 
@@ -2612,7 +2622,8 @@
       preview.hidden = true;
       return;
     }
-    const opening = parseFloat($("#st-opening").value) || 0;
+    const countRawP = $("#st-count") ? $("#st-count").value.trim() : "";
+    const opening = countRawP !== "" ? (parseFloat(countRawP) || 0) : (parseFloat($("#st-opening").value) || 0);
     const dispatched = parseFloat($("#st-dispatched").value) || 0;
     const producedMT = producedFor(date, productId, companyId) / KG_PER_MT;
     const xfer = transferNetFor(date, productId, companyId);
@@ -2620,10 +2631,9 @@
     preview.hidden = false;
     preview.textContent = "Closing stock after this: " + fmtNum(closing, 2) + " MT" +
       ((producedMT || xfer) ? " (" + fmtNum(opening, 2) + " opening + " + fmtNum(producedMT, 2) + " produced" + (xfer ? (xfer > 0 ? " + " : " − ") + fmtNum(Math.abs(xfer), 2) + " transferred " + (xfer > 0 ? "in" : "out") : "") + " − " + fmtNum(dispatched, 2) + " dispatched)" : "");
-    const countRaw = $("#st-count") ? $("#st-count").value.trim() : "";
-    if (countRaw !== "") {
-      const c = parseFloat(countRaw) || 0, adj = c - closing;
-      preview.textContent = "Closing stock after this: " + fmtNum(c, 2) + " MT (counted). Worked out " + fmtNum(closing, 2) + " MT, so adjustment " + (adj >= 0 ? "+" : "−") + fmtNum(Math.abs(adj), 2) + " MT.";
+    if (countRawP !== "") {
+      const carried = carriedOpeningFor(date, productId, companyId), adj = opening - carried;
+      preview.textContent += " — starts from the count of " + fmtNum(opening, 2) + " MT (carried forward was " + fmtNum(carried, 2) + " MT, adjustment " + (adj >= 0 ? "+" : "−") + fmtNum(Math.abs(adj), 2) + " MT).";
     }
   }
 
@@ -2638,7 +2648,7 @@
     // Orathur keeps the original document ids so its existing stock history carries on.
     const docId = date + "_" + productId + (companyId ? "_" + companyId : "") + (factory === "Orathur" ? "" : "_" + factory);
     const countRaw = $("#st-count") ? $("#st-count").value.trim() : "";
-    const payload = { date, productId, dispatched, opening, factory, physicalClosing: countRaw === "" ? null : (parseFloat(countRaw) || 0), updatedAt: new Date().toISOString() };
+    const payload = { date, productId, dispatched, opening, factory, countedOpening: countRaw === "" ? null : (parseFloat(countRaw) || 0), updatedAt: new Date().toISOString() };
     let companyName = "";
     if (companyId) {
       const company = jobCompanyById(companyId);
@@ -2729,7 +2739,7 @@
       const dispatched = sumScopes(() => dispatchedFor(b.date, b.productId, b.companyId));
       const transfers = sumScopes(() => transferNetFor(b.date, b.productId, b.companyId));
       const closing = sumScopes(() => closingFor(b.date, b.productId, b.companyId));
-      const adj = sumScopes(() => { const c = countFor(b.date, b.productId, b.companyId); return c == null ? 0 : c - bookClosingFor(b.date, b.productId, b.companyId); });
+      const adj = sumScopes(() => countAdjustmentFor(b.date, b.productId, b.companyId));
       const counted = scopes.some((f) => { stockScope = f; const c = countFor(b.date, b.productId, b.companyId); stockScope = state.viewFactory; return c != null; });
       // Only a bucket backed by an actual saved Stock doc (an opening
       // override or a manually-entered dispatch) can be deleted — a
@@ -2743,11 +2753,11 @@
         el("td", {}, [b.date]),
         el("td", {}, [productName(b.productId)]),
         companyCell,
-        el("td", { class: "num" }, [fmtNum(opening, 2)]),
+        el("td", { class: "num" }, [fmtNum(opening, 2), counted ? el("div", { class: "hint", title: "Stock counted at the start of this day. Adjustment = counted minus the figure carried forward (dispatches or losses not entered yet). It shrinks as older entries are filled in." }, ["counted" + (Math.abs(adj) >= 0.005 ? " · adj " + (adj > 0 ? "+" : "−") + fmtNum(Math.abs(adj), 2) : " · matches")]) : null]),
         el("td", { class: "num" }, [fmtNum(producedMT, 2)]),
         el("td", { class: "num" }, [transfers ? (transfers > 0 ? "+" : "−") + fmtNum(Math.abs(transfers), 2) : "—"]),
         el("td", { class: "num" }, [fmtNum(dispatched, 2)]),
-        el("td", { class: "num strong" }, [fmtNum(closing, 2), counted ? el("div", { class: "hint", title: "Physical stock count. Adjustment = counted minus worked-out stock (dispatches or losses not entered)." }, ["counted" + (Math.abs(adj) >= 0.005 ? " · adj " + (adj > 0 ? "+" : "−") + fmtNum(Math.abs(adj), 2) : "")]) : null]),
+        el("td", { class: "num strong" }, [fmtNum(closing, 2)]),
         el("td", { class: "num" }, [
           existingDoc
             ? el("button", {
