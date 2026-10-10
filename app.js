@@ -146,6 +146,62 @@
     stitchingExpense: "Stitching", sackExpenses: "Sack", departmentExpenses: "Department / misc", staffSalaries: "Staff salaries",
   };
   function monthOf(date) { return String(date || "").slice(0, 7); }
+  function isWageLine(d) { return d && d.category === "Salaries & Wages" && /loadman|loadmen|operator/i.test(d.paidTo || ""); }
+  // A factory's actual loadman + operator wages for a month, from the
+  // salary sheets entered in the EMR Tracker.
+  function monthLabourPool(m, factory) {
+    return state.trackerExpenses.reduce((a, d) => a + (monthOf(d.date) === m && d.branch === factory && isWageLine(d) ? Number(d.amount) || 0 : 0), 0);
+  }
+  function salarySheetFor(m, factory) {
+    const out = { loadAmt: 0, loadHead: 0, opAmt: 0, opHead: 0 };
+    state.trackerExpenses.forEach((d) => {
+      if (monthOf(d.date) !== m || d.branch !== factory || !isWageLine(d)) return;
+      const txt = d.paidTo || "";
+      if (/loadm/i.test(txt)) { out.loadAmt += Number(d.amount) || 0; const h = txt.match(/\((\d+)\s*loadmen/i); if (h) out.loadHead += Number(h[1]); }
+      else { out.opAmt += Number(d.amount) || 0; const h = txt.match(/\((\d+)\s*operators/i); if (h) out.opHead += Number(h[1]); }
+    });
+    return out;
+  }
+  function attendanceFor(date, factory) {
+    const a = state.attendance[dayLabourKey(date, factory)];
+    return a ? { operators: Number(a.operators) || 0, loadmen: Number(a.loadmen) || 0 } : null;
+  }
+  function labourOverrideFor(e) {
+    const c = companyLabourCostOverride(e.jobworkCompanyId);
+    if (c != null) return c * ((Number(e.outputQty) || 0) / KG_PER_MT);
+    const p = productLabourCostOverride(e.productId);
+    return p != null ? p : null;
+  }
+  // Month-end labour: the factory's actual wages are spread over the days
+  // by attendance (operators + loadmen present), then over each day's
+  // batches by output. Batches with a fixed labour rate keep it. Days
+  // without attendance fall back to sharing by output.
+  function monthLabourAllocation(m, factory, rows) {
+    const pool = monthLabourPool(m, factory);
+    if (!(pool > 0)) return null;
+    const out = {};
+    let fixed = 0;
+    const flt = [];
+    rows.forEach((e) => { const o = labourOverrideFor(e); if (o != null) { out[e.id] = o; fixed += o; } else flt.push(e); });
+    const rem = Math.max(0, pool - fixed);
+    const byDay = {};
+    flt.forEach((e) => { (byDay[e.date] = byDay[e.date] || []).push(e); });
+    const days = Object.keys(byDay);
+    const allHave = days.length && days.every((d) => { const a = attendanceFor(d, factory); return a && (a.operators + a.loadmen) > 0; });
+    const dayW = {};
+    let tw = 0;
+    days.forEach((d) => {
+      const a = attendanceFor(d, factory);
+      const w = allHave ? (a.operators + a.loadmen) : byDay[d].reduce((x, e) => x + (Number(e.outputQty) || 0), 0);
+      dayW[d] = w; tw += w;
+    });
+    days.forEach((d) => {
+      const share = tw > 0 ? rem * dayW[d] / tw : 0;
+      const kg = byDay[d].reduce((x, e) => x + (Number(e.outputQty) || 0), 0);
+      byDay[d].forEach((e) => { out[e.id] = kg > 0 ? share * (Number(e.outputQty) || 0) / kg : 0; });
+    });
+    return { alloc: out, basis: allHave ? "attendance" : "output" };
+  }
   function isClosedMonth(m) { return /^\d{4}-\d{2}$/.test(m) && m < todayStr().slice(0, 7); }
 
   // Factories — every batch is tagged with the one it was made at, and
@@ -179,6 +235,15 @@
     const fromBills = {};
     state.trackerExpenses.forEach((d) => {
       if (monthOf(d.date) !== m) return;
+      if (d.category === "Salaries & Wages") {
+        // Loadman / operator wages are each factory's own labour cost
+        // (costed from attendance, see the Attendance tab), not processing.
+        if (isWageLine(d)) return;
+        // Staff salaries are common to both factories: shared by each
+        // factory's part of the month's total production.
+        fromBills.staffSalaries = (fromBills.staffSalaries || 0) + (Number(d.amount) || 0) * (factory ? share : 1);
+        return;
+      }
       if (factory && d.branch && d.branch !== factory) return;
       const k = EXPENSE_CATEGORY_FIELD[d.category];
       if (!k) return;
@@ -234,24 +299,35 @@
     const monthKg = rows.reduce((a, e) => a + (Number(e.outputQty) || 0), 0);
     const batch = state.db.batch();
     let n = 0;
+    const newProc = {}, procMeta = {};
     monthGroups(rows).forEach((g) => {
       const rate = groupRate(m, g, monthKg);
       if (rate == null) return;
       g.rows.forEach((e) => {
         const ov = productProcessingCostOverride(e.productId);
-        const proc = ov != null ? ov : rate * ((Number(e.outputQty) || 0) / KG_PER_MT);
-        const rateGroup = g.factory || "both";
-        if (Math.abs(proc - (Number(e.processingCost) || 0)) < 0.5 && e.processingRateMonth === m && e.processingRateGroup === rateGroup) return;
-        const totalCost = (Number(e.rmCost) || 0) + proc + (Number(e.labourCost) || 0);
-        const fields = {
-          processingCost: proc, totalCost,
-          costPerKg: e.outputQty > 0 ? totalCost / e.outputQty : 0,
-          processingRatePerMT: ov != null ? null : rate, processingRateMonth: m, processingRateGroup: rateGroup,
-        };
-        if (e.jobworkCompanyId) fields.jobworkProfit = (Number(e.jobworkRevenue) || 0) - totalCost;
-        batch.update(state.db.collection("entries").doc(e.id), fields);
-        n++;
+        newProc[e.id] = ov != null ? ov : rate * ((Number(e.outputQty) || 0) / KG_PER_MT);
+        procMeta[e.id] = { processingRatePerMT: ov != null ? null : rate, processingRateMonth: m, processingRateGroup: g.factory || "both" };
       });
+    });
+    const newLab = {}, labBasis = {};
+    FACTORIES.forEach((f) => {
+      const r = monthLabourAllocation(m, f, rows.filter((e) => factoryOf(e) === f));
+      if (!r) return;
+      Object.keys(r.alloc).forEach((id) => { newLab[id] = r.alloc[id]; labBasis[id] = r.basis; });
+    });
+    rows.forEach((e) => {
+      const proc = newProc[e.id] != null ? newProc[e.id] : (Number(e.processingCost) || 0);
+      const lab = newLab[e.id] != null ? newLab[e.id] : (Number(e.labourCost) || 0);
+      const pm = procMeta[e.id];
+      const procSame = Math.abs(proc - (Number(e.processingCost) || 0)) < 0.5 && (!pm || (e.processingRateMonth === m && e.processingRateGroup === pm.processingRateGroup));
+      const labSame = Math.abs(lab - (Number(e.labourCost) || 0)) < 0.5 && (newLab[e.id] == null || e.labourMonth === m);
+      if (procSame && labSame) return;
+      const totalCost = (Number(e.rmCost) || 0) + proc + lab;
+      const fields = Object.assign({ processingCost: proc, labourCost: lab, totalCost, costPerKg: e.outputQty > 0 ? totalCost / e.outputQty : 0 }, pm || {});
+      if (newLab[e.id] != null) { fields.labourMonth = m; fields.labourBasis = "salary sheet by " + labBasis[e.id]; }
+      if (e.jobworkCompanyId) fields.jobworkProfit = (Number(e.jobworkRevenue) || 0) - totalCost;
+      batch.update(state.db.collection("entries").doc(e.id), fields);
+      n++;
     });
     if (n) await batch.commit();
     return n;
@@ -351,7 +427,8 @@
     companyId: "", // set only for the "company" role — the one company it may see
     entries: [],
     stock: [],
-    dayLabour: {}, // date -> { operators, loadmen } — the shared day-crew doc, cached per date as it's loaded
+    dayLabour: {}, // dayLabourKey(date, factory) -> { operators, loadmen } — that factory's daily attendance, cached as loaded
+    attendance: {}, // every dayLabour doc (live), for the monthly attendance vs salary-sheet check
     activeTab: "entry",
     materialFilter: "",
     reportFilter: { start: "", end: "", productId: "" },
@@ -520,22 +597,34 @@
   // normal per-batch number) if it has its own product or company labour
   // rate override, or never opted into the day split at all.
   // ---------------------------------------------------------------
-  async function loadDayLabourForDate(date) {
+  // Daily attendance is kept per factory: Orathur keeps the original
+  // dayLabour/<date> documents, Vikravandi uses dayLabour/<date>_Vikravandi.
+  function dayLabourKey(date, factory) { return factory === "Vikravandi" ? date + "_Vikravandi" : date; }
+  function wageRatesFor(factory) {
+    const L = state.labour;
+    if (factory === "Vikravandi") return {
+      op: L.vkdOperatorRate != null && L.vkdOperatorRate !== "" ? Number(L.vkdOperatorRate) : (Number(L.operatorRate) || 0),
+      ld: L.vkdLoadmanRate != null && L.vkdLoadmanRate !== "" ? Number(L.vkdLoadmanRate) : (Number(L.loadmanRate) || 0),
+    };
+    return { op: Number(L.operatorRate) || 0, ld: Number(L.loadmanRate) || 0 };
+  }
+  async function loadDayLabourForDate(date, factory) {
     if (!date) return null;
-    if (state.dayLabour[date] !== undefined) return state.dayLabour[date];
+    const key = dayLabourKey(date, factory || "Orathur");
+    if (state.dayLabour[key] !== undefined) return state.dayLabour[key];
     if (!state.db) return null;
     try {
-      const doc = await state.db.collection("dayLabour").doc(date).get();
-      state.dayLabour[date] = doc.exists ? doc.data() : null;
+      const doc = await state.db.collection("dayLabour").doc(key).get();
+      state.dayLabour[key] = doc.exists ? doc.data() : null;
     } catch (e) {
-      state.dayLabour[date] = null;
+      state.dayLabour[key] = null;
     }
-    return state.dayLabour[date];
+    return state.dayLabour[key];
   }
 
-  function dayLabourPoolFor(date) {
+  function dayLabourPoolFor(date, factory) {
     return state.entries.filter((e) =>
-      e.date === date && e.usesDayLabourSplit &&
+      e.date === date && e.usesDayLabourSplit && factoryOf(e) === (factory || "Orathur") &&
       companyLabourCostOverride(e.jobworkCompanyId) == null &&
       productLabourCostOverride(e.productId) == null
     );
@@ -546,13 +635,17 @@
   // shared-crew pool. Called after any save/edit/delete that could shift
   // the pool's total output or membership — cheap no-op if that date has
   // no day-crew doc or nothing in the pool.
-  async function recomputeDayLabourSplit(date) {
+  async function recomputeDayLabourSplit(date, factory) {
     if (!date) return;
-    const dayDoc = await loadDayLabourForDate(date);
-    const pool = dayLabourPoolFor(date);
+    factory = factory || "Orathur";
+    // A finished month whose salary sheet is in is costed from the actual
+    // wages instead (recalcMonthProcessing) — don't overwrite that here.
+    if (isClosedMonth(monthOf(date)) && monthLabourPool(monthOf(date), factory) > 0) return;
+    const dayDoc = await loadDayLabourForDate(date, factory);
+    const pool = dayLabourPoolFor(date, factory);
     if (!dayDoc || !pool.length) return;
-    const dayLabourCost = (Number(dayDoc.operators) || 0) * (Number(state.labour.operatorRate) || 0) +
-      (Number(dayDoc.loadmen) || 0) * (Number(state.labour.loadmanRate) || 0);
+    const r = wageRatesFor(factory);
+    const dayLabourCost = (Number(dayDoc.operators) || 0) * r.op + (Number(dayDoc.loadmen) || 0) * r.ld;
     const totalOutputKg = pool.reduce((s, e) => s + (Number(e.outputQty) || 0), 0);
     const updates = pool.map((e) => {
       const share = totalOutputKg > 0 ? dayLabourCost * ((Number(e.outputQty) || 0) / totalOutputKg) : 0;
@@ -578,11 +671,14 @@
     }
   }
 
-  async function saveDayLabour(date, operators, loadmen) {
-    const payload = { date, operators: Number(operators) || 0, loadmen: Number(loadmen) || 0, updatedAt: new Date().toISOString() };
-    state.dayLabour[date] = payload;
+  async function saveDayLabour(date, operators, loadmen, factory) {
+    factory = factory || "Orathur";
+    const payload = { date, factory, operators: Number(operators) || 0, loadmen: Number(loadmen) || 0, updatedAt: new Date().toISOString() };
+    const key = dayLabourKey(date, factory);
+    state.dayLabour[key] = payload;
+    state.attendance[key] = payload;
     if (state.db) {
-      await state.db.collection("dayLabour").doc(date).set(payload);
+      await state.db.collection("dayLabour").doc(key).set(payload);
     }
   }
 
@@ -1006,6 +1102,16 @@
       },
       () => { state.floatLoaded.expenses = true; maybeAutoRecalc(); }
     );
+    db.collection("dayLabour").limit(3000).onSnapshot(
+      (snap) => {
+        state.attendance = {};
+        snap.docs.forEach((d) => { state.attendance[d.id] = d.data(); state.dayLabour[d.id] = d.data(); });
+        state.floatLoaded.attendance = true;
+        renderAttendance();
+        maybeAutoRecalc();
+      },
+      () => { state.floatLoaded.attendance = true; }
+    );
     db.doc("settings/processingMonths").onSnapshot(
       (snap) => {
         state.processingMonths = (snap.exists && snap.data().months) || {};
@@ -1155,6 +1261,7 @@
     // figure automatically — make sure the ledger reflects the latest
     // entries the moment someone opens the Stock tab.
     if (tab === "stock") renderStock();
+    if (tab === "attendance") renderAttendance();
   }
 
   // ---------------------------------------------------------------
@@ -1382,7 +1489,10 @@
     if ($("#f-daylabour-hint")) $("#f-daylabour-hint").hidden = !checked;
     if (checked) {
       const date = $("#f-date") ? $("#f-date").value : todayStr();
-      const existing = await loadDayLabourForDate(date);
+      const factory = $("#f-factory") ? $("#f-factory").value : "";
+      const lbl = $("#f-attendance-title");
+      if (lbl) lbl.textContent = "Attendance today" + (factory ? " at " + factory : "") + " (required)";
+      const existing = factory ? await loadDayLabourForDate(date, factory) : null;
       if ($("#f-daylabour-operators")) $("#f-daylabour-operators").value = existing ? existing.operators : "";
       if ($("#f-daylabour-loadmen")) $("#f-daylabour-loadmen").value = existing ? existing.loadmen : "";
     }
@@ -1509,6 +1619,8 @@
 
     if (!date) return toast("Pick a date first.", "error");
     if (!factory) return toast("Pick the factory — Orathur or Vikravandi.", "error");
+    if ($("#f-daylabour-operators") && ($("#f-daylabour-operators").value.trim() === "" || $("#f-daylabour-loadmen").value.trim() === ""))
+      return toast("Enter today's attendance — number of operators and loadmen at " + factory + ".", "error");
     if (!productId) return toast("Pick a product first.", "error");
     if (productId === "__other__") return toast("Finish adding the new product first.", "error");
     if (outputVal <= 0) return toast("Enter the output quantity produced.", "error");
@@ -1606,8 +1718,8 @@
         if (idx !== -1) state.entries[idx] = merged; else state.entries.unshift(merged);
       }
       try { localStorage.setItem("bb_last_factory", factory); } catch (e) { /* ignore */ }
-      if (useDayLabour) await saveDayLabour(date, dayOperators, dayLoadmen);
-      await recomputeDayLabourSplit(date);
+      if (useDayLabour) await saveDayLabour(date, dayOperators, dayLoadmen, factory);
+      await recomputeDayLabourSplit(date, factory);
       if (isClosedMonth(monthOf(date))) await recalcMonthProcessing(monthOf(date));
       if (!state.db) {
         renderTodayList();
@@ -1745,7 +1857,7 @@
     // otherwise re-saving it while editing would silently drop it out
     // (the checkbox would read as unchecked) even though it was pooled.
     if ($("#f-use-daylabour")) {
-      $("#f-use-daylabour").checked = !!entry.usesDayLabourSplit;
+      $("#f-use-daylabour").checked = true;
       toggleDayLabourUI();
     }
     updateLiveSummary();
@@ -1905,11 +2017,11 @@
         // the rest. Drop it from our local copy first since the realtime
         // listener hasn't come back yet.
         state.entries = state.entries.filter((e) => e.id !== id);
-        if (date) await recomputeDayLabourSplit(date);
+        if (date) await recomputeDayLabourSplit(date, factoryOf(target));
         if (date && isClosedMonth(monthOf(date))) await recalcMonthProcessing(monthOf(date));
       } else {
         state.entries = state.entries.filter((e) => e.id !== id);
-        if (date) await recomputeDayLabourSplit(date);
+        if (date) await recomputeDayLabourSplit(date, factoryOf(target));
         renderTodayList();
         renderReports();
         // Stock's Produced/Closing figures are computed live from
@@ -2887,6 +2999,8 @@
     renderFloatingRates();
     if ($("#s-operator-rate")) $("#s-operator-rate").value = state.labour.operatorRate;
     if ($("#s-loadman-rate")) $("#s-loadman-rate").value = state.labour.loadmanRate;
+    if ($("#s-vkd-operator-rate")) $("#s-vkd-operator-rate").value = state.labour.vkdOperatorRate != null ? state.labour.vkdOperatorRate : "";
+    if ($("#s-vkd-loadman-rate")) $("#s-vkd-loadman-rate").value = state.labour.vkdLoadmanRate != null ? state.labour.vkdLoadmanRate : "";
     if ($("#s-processing-cost")) $("#s-processing-cost").value = state.labour.processingCost;
     const fieldIds = {
       ebCost: "s-eb-cost", fuelCost: "s-fuel-cost", maintenanceCost: "s-maintenance-cost",
@@ -3010,6 +3124,8 @@
     const payload = Object.assign({}, state.labour, {
       operatorRate: parseFloat($("#s-operator-rate").value) || 0,
       loadmanRate: parseFloat($("#s-loadman-rate").value) || 0,
+      vkdOperatorRate: $("#s-vkd-operator-rate") && $("#s-vkd-operator-rate").value !== "" ? parseFloat($("#s-vkd-operator-rate").value) || 0 : null,
+      vkdLoadmanRate: $("#s-vkd-loadman-rate") && $("#s-vkd-loadman-rate").value !== "" ? parseFloat($("#s-vkd-loadman-rate").value) || 0 : null,
       processingCost: parseFloat($("#s-processing-cost").value) || 0,
     });
     state.labour = payload;
@@ -3152,7 +3268,7 @@
       let lastFactory = "";
       try { lastFactory = localStorage.getItem("bb_last_factory") || ""; } catch (e) { /* ignore */ }
       if (FACTORIES.indexOf(lastFactory) !== -1) $("#f-factory").value = lastFactory;
-      $("#f-factory").addEventListener("change", updateLiveSummary);
+      $("#f-factory").addEventListener("change", () => { toggleDayLabourUI(); updateLiveSummary(); });
     }
     $("#f-date").addEventListener("change", () => {
       if ($("#f-use-daylabour") && $("#f-use-daylabour").checked) toggleDayLabourUI();
@@ -3404,6 +3520,105 @@
     }
   }
 
+  // ---------- Attendance tab ----------
+  function attMonthLabel(m) { return new Date(m + "-01T00:00:00").toLocaleDateString("en-IN", { month: "short", year: "numeric" }); }
+  function renderAttendance() {
+    if (!$("#view-attendance")) return;
+    // entry form: show what's saved for the picked date / factory
+    const d = $("#att-date") ? $("#att-date").value : "";
+    const f = $("#att-factory") ? $("#att-factory").value : "";
+    if (d && f && document.activeElement !== $("#att-operators") && document.activeElement !== $("#att-loadmen")) {
+      const a = attendanceFor(d, f);
+      $("#att-operators").value = a ? a.operators : "";
+      $("#att-loadmen").value = a ? a.loadmen : "";
+      $("#att-status").textContent = a ? "Saved for " + f + " on " + d + "." : "Not entered yet for " + f + " on " + d + ".";
+    }
+    // month selector
+    const ms = $("#att-month");
+    const monthsSet = new Set();
+    Object.values(state.attendance).forEach((a) => { if (a.date) monthsSet.add(monthOf(a.date)); });
+    state.entries.forEach((e) => monthsSet.add(monthOf(e.date)));
+    monthsSet.add(todayStr().slice(0, 7));
+    const months = Array.from(monthsSet).filter((m) => /^\d{4}-\d{2}$/.test(m)).sort().reverse();
+    if (ms) {
+      const keep = ms.value;
+      ms.innerHTML = months.map((m) => '<option value="' + m + '">' + attMonthLabel(m) + '</option>').join("");
+      ms.value = keep && months.indexOf(keep) !== -1 ? keep : months[0];
+    }
+    const m = ms ? ms.value : todayStr().slice(0, 7);
+    const fs = state.viewFactory ? [state.viewFactory] : FACTORIES.slice();
+    // register
+    const [yy, mm] = m.split("-").map(Number);
+    const daysIn = new Date(yy, mm, 0).getDate();
+    let html = '<div class="table-wrap max-scroll"><table><thead><tr><th>Date</th>' + fs.map((f) => '<th class="num">' + f + ' operators</th><th class="num">' + f + ' loadmen</th><th class="num">' + f + ' output (MT)</th>').join("") + '</tr></thead><tbody>';
+    const tot = {};
+    fs.forEach((f) => { tot[f] = { op: 0, ld: 0, kg: 0, days: 0, missing: 0 }; });
+    for (let day = daysIn; day >= 1; day--) {
+      const date = m + "-" + String(day).padStart(2, "0");
+      if (date > todayStr()) continue;
+      let cells = "", any = false;
+      fs.forEach((f) => {
+        const a = attendanceFor(date, f);
+        const kg = state.entries.filter((e) => e.date === date && factoryOf(e) === f).reduce((x, e) => x + (Number(e.outputQty) || 0), 0);
+        if (a) { tot[f].op += a.operators; tot[f].ld += a.loadmen; tot[f].days++; any = true; }
+        if (kg) { tot[f].kg += kg; any = true; }
+        const miss = kg > 0 && !a;
+        if (miss) tot[f].missing++;
+        cells += '<td class="num">' + (a ? a.operators : (miss ? '<span style="color:var(--critical);font-weight:700;">missing</span>' : "—")) + '</td><td class="num">' + (a ? a.loadmen : (miss ? '<span style="color:var(--critical);font-weight:700;">missing</span>' : "—")) + '</td><td class="num">' + (kg ? fmtNum(kg / KG_PER_MT, 1) : "—") + '</td>';
+      });
+      if (any) html += '<tr><td>' + date + '</td>' + cells + '</tr>';
+    }
+    html += '<tr style="font-weight:800;"><td>Total</td>' + fs.map((f) => '<td class="num">' + tot[f].op + '</td><td class="num">' + tot[f].ld + '</td><td class="num">' + fmtNum(tot[f].kg / KG_PER_MT, 1) + '</td>').join("") + '</tr></tbody></table></div>';
+    const missing = fs.reduce((a, f) => a + tot[f].missing, 0);
+    if (missing) html = '<p class="factory-note">' + missing + ' day' + (missing === 1 ? " has" : "s have") + ' production logged but no attendance. Enter it above so wages are shared correctly.</p>' + html;
+    if ($("#att-register")) $("#att-register").innerHTML = html;
+
+    // salary sheet check + month-end rate (admin only)
+    const card = $("#att-salary-card");
+    if (card) card.hidden = state.role !== "admin";
+    if (state.role !== "admin") return;
+    const money = (v) => "₹" + Math.round(v || 0).toLocaleString("en-IN");
+    let h2 = '<div class="table-wrap"><table><thead><tr><th>Factory</th><th class="num">Days with attendance</th><th class="num">Operator man-days</th><th class="num">Loadman man-days</th><th class="num">Salary sheet — operators</th><th class="num">Salary sheet — loadmen</th><th class="num">At daily wage rate</th><th class="num">Difference</th><th class="num">Wages per man-day</th><th class="num">Wages per MT</th></tr></thead><tbody>';
+    FACTORIES.forEach((f) => {
+      const t = { op: 0, ld: 0, days: 0, kg: 0 };
+      Object.values(state.attendance).forEach((a) => { if (monthOf(a.date) === m && (a.factory || "Orathur") === f) { t.op += Number(a.operators) || 0; t.ld += Number(a.loadmen) || 0; t.days++; } });
+      state.entries.forEach((e) => { if (monthOf(e.date) === m && factoryOf(e) === f) t.kg += Number(e.outputQty) || 0; });
+      const sh = salarySheetFor(m, f), r = wageRatesFor(f);
+      const sheet = sh.opAmt + sh.loadAmt, atRate = t.op * r.op + t.ld * r.ld, md = t.op + t.ld;
+      h2 += '<tr><td>' + f + '</td><td class="num">' + t.days + '</td><td class="num">' + t.op + '</td><td class="num">' + t.ld + '</td>' +
+        '<td class="num">' + (sh.opAmt ? money(sh.opAmt) + (sh.opHead ? ' <span class="hint">(' + sh.opHead + ')</span>' : '') : '<span class="hint">not entered</span>') + '</td>' +
+        '<td class="num">' + (sh.loadAmt ? money(sh.loadAmt) + (sh.loadHead ? ' <span class="hint">(' + sh.loadHead + ')</span>' : '') : '<span class="hint">not entered</span>') + '</td>' +
+        '<td class="num">' + money(atRate) + '</td><td class="num"><strong>' + (sheet ? (sheet - atRate >= 0 ? "+" : "−") + money(Math.abs(sheet - atRate)).slice(0) : "—") + '</strong></td>' +
+        '<td class="num">' + (sheet && md ? money(sheet / md) : "—") + '</td><td class="num">' + (sheet && t.kg ? money(sheet / (t.kg / KG_PER_MT)) : "—") + '</td></tr>';
+    });
+    h2 += '</tbody></table></div>';
+    // common staff salaries
+    let staff = 0;
+    state.trackerExpenses.forEach((d) => { if (monthOf(d.date) === m && d.category === "Salaries & Wages" && !isWageLine(d)) staff += Number(d.amount) || 0; });
+    const kgF = {}; let kgT = 0;
+    FACTORIES.forEach((f) => { kgF[f] = state.entries.filter((e) => monthOf(e.date) === m && factoryOf(e) === f).reduce((x, e) => x + (Number(e.outputQty) || 0), 0); kgT += kgF[f]; });
+    h2 += '<div class="card-title" style="margin-top:18px;">Staff salaries — common to both factories</div><div class="table-wrap"><table><thead><tr><th>Factory</th><th class="num">Output (MT)</th><th class="num">Share</th><th class="num">Staff salary charged</th><th class="num">Per MT</th></tr></thead><tbody>';
+    FACTORIES.forEach((f) => {
+      const sh = kgT ? kgF[f] / kgT : 0;
+      h2 += '<tr><td>' + f + '</td><td class="num">' + fmtNum(kgF[f] / KG_PER_MT, 1) + '</td><td class="num">' + (sh * 100).toFixed(1) + '%</td><td class="num">' + (staff ? money(staff * sh) : "—") + '</td><td class="num">' + (staff && kgT ? money(staff / (kgT / KG_PER_MT)) : "—") + '</td></tr>';
+    });
+    h2 += '<tr style="font-weight:800;"><td>Total</td><td class="num">' + fmtNum(kgT / KG_PER_MT, 1) + '</td><td class="num">100%</td><td class="num">' + (staff ? money(staff) : '<span class="hint">salary sheet not entered</span>') + '</td><td></td></tr></tbody></table></div>';
+    if ($("#att-salary")) $("#att-salary").innerHTML = h2;
+  }
+  async function saveAttendance() {
+    const d = $("#att-date").value, f = $("#att-factory").value;
+    const op = $("#att-operators").value.trim(), ld = $("#att-loadmen").value.trim();
+    if (!d || !f) return toast("Pick the date and factory.", "error");
+    if (op === "" || ld === "") return toast("Enter both operators and loadmen present (0 if none).", "error");
+    try {
+      await saveDayLabour(d, parseFloat(op) || 0, parseFloat(ld) || 0, f);
+      await recomputeDayLabourSplit(d, f);
+      if (isClosedMonth(monthOf(d))) await recalcMonthProcessing(monthOf(d));
+      toast("Attendance saved for " + f + " on " + d + ".", "success");
+      renderAttendance();
+    } catch (e) { toast("Could not save attendance: " + e.message, "error"); }
+  }
+
   function setViewFactory(f, silent) {
     state.viewFactory = FACTORIES.indexOf(f) !== -1 ? f : "";
     stockScope = state.viewFactory;
@@ -3414,7 +3629,9 @@
     if (state.viewFactory && $("#st-factory")) $("#st-factory").value = state.viewFactory;
     // New batches default to the factory being viewed.
     if (state.viewFactory && $("#f-factory") && !state.editingEntryId) $("#f-factory").value = state.viewFactory;
+    if ($("#att-factory") && state.viewFactory) $("#att-factory").value = state.viewFactory;
     if (!silent) {
+      renderAttendance();
       renderTodayList();
       renderReports();
       renderStock();
@@ -3436,6 +3653,8 @@
     populateJobCompanySelect();
     renderJobCompanies();
     renderJobPnL();
+    renderAttendance();
+    if ($("#f-use-daylabour") && $("#f-use-daylabour").checked) toggleDayLabourUI();
   }
 
   document.addEventListener("DOMContentLoaded", function () {
@@ -3465,6 +3684,10 @@
     $all(".factory-switch button").forEach((b) => b.addEventListener("click", () => setViewFactory(b.dataset.factory)));
     $all(".factory-view-select").forEach((sel) => sel.addEventListener("change", () => setViewFactory(sel.value)));
     if ($("#st-factory")) $("#st-factory").addEventListener("change", stockAutofillOpening);
+    if ($("#att-date")) { $("#att-date").value = todayStr(); $("#att-date").addEventListener("change", renderAttendance); }
+    if ($("#att-factory")) $("#att-factory").addEventListener("change", renderAttendance);
+    if ($("#att-month")) $("#att-month").addEventListener("change", renderAttendance);
+    if ($("#btn-att-save")) $("#btn-att-save").addEventListener("click", saveAttendance);
     if ($("#st-count")) $("#st-count").addEventListener("input", updateStockClosingPreview);
     if ($("#xf-item")) $("#xf-item").addEventListener("change", toggleXferOther);
     if ($("#btn-xfer-save")) $("#btn-xfer-save").addEventListener("click", submitTransfer);

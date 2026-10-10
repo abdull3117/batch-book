@@ -46,6 +46,7 @@
     <button class="tab-btn active" data-tab="entry">📝 Log Batch</button>
     <button class="tab-btn" data-tab="reports" id="tab-btn-reports">📊 Reports</button>
     <button class="tab-btn" data-tab="stock">📦 Stock</button>
+    <button class="tab-btn" data-tab="attendance" id="tab-btn-attendance">🗓️ Attendance</button>
     <button class="tab-btn" data-tab="jobwork" id="tab-btn-jobwork">🤝 Job Work</button>
     <button class="tab-btn" data-tab="settings" id="tab-btn-settings">⚙️ Settings</button>
   </div>
@@ -149,7 +150,7 @@
         </div>
         <div id="material-grid"></div>
 
-        <div class="labour-row" id="f-labour-row">
+        <div class="labour-row" id="f-labour-row" hidden>
           <div class="field">
             <label for="f-operators">Operators (count)</label>
             <input type="number" min="0" step="1" id="f-operators" placeholder="0" />
@@ -159,21 +160,22 @@
             <input type="number" min="0" step="1" id="f-loadmen" placeholder="0" />
           </div>
         </div>
-        <label style="display:flex; align-items:center; gap:8px; cursor:pointer; margin-top:10px; font-size:.86rem; font-weight:600;">
-          <input type="checkbox" id="f-use-daylabour" style="width:auto;" />
-          Same crew across today's batches &mdash; split labour cost by output instead
+        <label hidden style="display:flex; align-items:center; gap:8px; cursor:pointer; margin-top:10px; font-size:.86rem; font-weight:600;">
+          <input type="checkbox" id="f-use-daylabour" style="width:auto;" checked />
+          Same crew across today's batches
         </label>
-        <div class="labour-row" id="f-daylabour-row" hidden style="margin-top:8px;">
+        <div class="card-title" id="f-attendance-title" style="margin:14px 0 6px;">Attendance today (required)</div>
+        <div class="labour-row" id="f-daylabour-row" style="margin-top:0;">
           <div class="field">
-            <label for="f-daylabour-operators">Today's total operators</label>
+            <label for="f-daylabour-operators">Operators present today</label>
             <input type="number" min="0" step="1" id="f-daylabour-operators" placeholder="0" />
           </div>
           <div class="field">
-            <label for="f-daylabour-loadmen">Today's total loadmen</label>
+            <label for="f-daylabour-loadmen">Loadmen present today</label>
             <input type="number" min="0" step="1" id="f-daylabour-loadmen" placeholder="0" />
           </div>
         </div>
-        <p class="hint" id="f-daylabour-hint" hidden style="margin-top:6px;">Enter the whole day's crew once, on any one of today's batches &mdash; each batch's labour cost is then split in proportion to its own output across every batch logged today that also uses this (a batch with its own labour rate override, by product or job-work company, is left out of the split and keeps that rate).</p>
+        <p class="hint" id="f-daylabour-hint" style="margin-top:6px;">The whole factory&rsquo;s attendance for the day, entered once (also on the Attendance tab). Labour cost is shared across the day&rsquo;s batches by output; at month end it is replaced by the actual salary sheet.</p>
         <div class="field wide" style="margin-top:12px;">
           <label for="f-remarks">Remarks (optional)</label>
           <textarea id="f-remarks" placeholder="Anything the office should know about this batch"></textarea>
@@ -314,6 +316,36 @@
   </section>
 
   <!-- ============ STOCK ============ -->
+  <section class="view" id="view-attendance">
+    <div class="view-header">
+      <h2>🗓️ Attendance</h2>
+      <p>Operators and loadmen present each day at each factory. Required before batches can be saved; at month end the salary sheets are shared out by this attendance.</p>
+    </div>
+    <div class="card">
+      <div class="card-title">Enter attendance</div>
+      <div class="field-row cols-5">
+        <div class="field"><label for="att-date">Date</label><input type="date" id="att-date" /></div>
+        <div class="field"><label for="att-factory">Factory</label><select id="att-factory"><option>Orathur</option><option>Vikravandi</option></select></div>
+        <div class="field"><label for="att-operators">Operators present</label><input type="number" min="0" step="1" id="att-operators" placeholder="0" /></div>
+        <div class="field"><label for="att-loadmen">Loadmen present</label><input type="number" min="0" step="1" id="att-loadmen" placeholder="0" /></div>
+        <div class="field"><label>&nbsp;</label><button class="btn btn-primary" id="btn-att-save" style="margin-top:0;">Save attendance</button></div>
+      </div>
+      <p class="hint" id="att-status"></p>
+    </div>
+    <div class="card" style="margin-top:16px;">
+      <div class="card-title-row">
+        <div class="card-title" style="margin:0;">Monthly register</div>
+        <div class="field" style="max-width:180px;"><label for="att-month">Month</label><select id="att-month"></select></div>
+      </div>
+      <div id="att-register"></div>
+    </div>
+    <div class="card" id="att-salary-card" style="margin-top:16px;">
+      <div class="card-title">Attendance vs salary sheet</div>
+      <p class="hint" style="margin:-6px 0 10px;">Loadman and operator salary sheets come from the EMR Tracker Expenses tab, separately for each factory. For a finished month they replace the daily-wage estimate: each factory&rsquo;s wages are spread over its days by attendance, then over that day&rsquo;s batches by output. Staff salaries are common and are shared by each factory&rsquo;s production.</p>
+      <div id="att-salary"></div>
+    </div>
+  </section>
+
   <section class="view" id="view-stock">
     <div class="view-header">
       <h2>📦 Finished goods stock</h2>
@@ -570,12 +602,20 @@
           <div class="card-title">Daily wages</div>
           <div class="field-row" style="grid-template-columns:1fr 1fr 1fr;">
             <div class="field">
-              <label for="s-operator-rate">Operator daily wage (&#8377;)</label>
+              <label for="s-operator-rate">Orathur operator daily wage (&#8377;)</label>
               <input type="number" min="0" step="any" id="s-operator-rate" />
             </div>
             <div class="field">
-              <label for="s-loadman-rate">Loadman daily wage (&#8377;)</label>
+              <label for="s-loadman-rate">Orathur loadman daily wage (&#8377;)</label>
               <input type="number" min="0" step="any" id="s-loadman-rate" />
+            </div>
+            <div class="field">
+              <label for="s-vkd-operator-rate">Vikravandi operator daily wage (&#8377;)</label>
+              <input type="number" min="0" step="any" id="s-vkd-operator-rate" placeholder="same as Orathur" />
+            </div>
+            <div class="field">
+              <label for="s-vkd-loadman-rate">Vikravandi loadman daily wage (&#8377;)</label>
+              <input type="number" min="0" step="any" id="s-vkd-loadman-rate" placeholder="same as Orathur" />
             </div>
             <div class="field">
               <label for="s-processing-cost">Fallback processing cost per batch (&#8377;)</label>
@@ -794,6 +834,6 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
-<script src="app.js?v=39"></script>
+<script src="app.js?v=40"></script>
 </body>
 </html>
