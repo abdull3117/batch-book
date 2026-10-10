@@ -12,7 +12,7 @@
 <!-- Cache-busting: GitHub Pages caches these for 10 minutes (Cache-Control: max-age=600).
      Bump the ?v= number on app.js, style.css and firebase-config.js below every time
      any of those files are redeployed, so users don't keep running a stale cached copy. -->
-<link rel="stylesheet" href="style.css?v=16" />
+<link rel="stylesheet" href="style.css?v=17" />
 </head>
 <body>
 
@@ -356,6 +356,30 @@
       <button class="btn btn-primary" id="btn-stock-save" style="max-width:240px;">Save stock entry</button>
     </div>
 
+    <div class="card" id="xfer-card">
+      <div class="card-title">Transfer between factories</div>
+      <p class="hint" style="margin:-6px 0 10px;">Finished products moved from one factory to the other come off the sending factory&rsquo;s stock and onto the receiving factory&rsquo;s, so the consolidated total doesn&rsquo;t change. Raw materials and other items are kept as a note.</p>
+      <div class="field-row cols-5">
+        <div class="field"><label for="xf-date">Date</label><input type="date" id="xf-date" /></div>
+        <div class="field"><label for="xf-from">From</label><select id="xf-from"><option>Vikravandi</option><option>Orathur</option></select></div>
+        <div class="field"><label for="xf-to">To</label><select id="xf-to"><option>Orathur</option><option>Vikravandi</option></select></div>
+        <div class="field"><label for="xf-item">Item</label><select id="xf-item"></select></div>
+        <div class="field"><label for="xf-qty">Quantity</label><input type="number" min="0" step="any" id="xf-qty" placeholder="0" /></div>
+      </div>
+      <div class="field-row cols-5" style="margin-top:-6px;">
+        <div class="field xf-other" hidden><label for="xf-other-name">Item name</label><input type="text" id="xf-other-name" placeholder="e.g. MOP, Seaweed gel, LPG cylinder" /></div>
+        <div class="field"><label for="xf-unit">Unit</label><input type="text" id="xf-unit" value="MT" disabled /></div>
+        <div class="field" style="grid-column: span 2;"><label for="xf-note">Note</label><input type="text" id="xf-note" placeholder="Lorry no., remarks (optional)" /></div>
+      </div>
+      <button class="btn btn-primary" id="btn-xfer-save" style="max-width:240px;">Save transfer</button>
+      <div class="table-wrap" style="margin-top:14px;">
+        <table>
+          <thead><tr><th>Date</th><th>From → To</th><th>Item</th><th class="num">Quantity</th><th>Effect</th><th></th></tr></thead>
+          <tbody id="xfer-body"></tbody>
+        </table>
+      </div>
+    </div>
+
     <div class="card">
       <div class="card-title-row">
         <div class="card-title" style="margin:0;">Stock ledger</div>
@@ -381,7 +405,7 @@
           <thead>
             <tr>
               <th>Date</th><th>Product</th><th id="stock-col-company">Company</th><th class="num">Opening (MT)</th><th class="num">Produced (MT)</th>
-              <th class="num">Dispatched (MT)</th><th class="num">Closing (MT)</th><th></th>
+              <th class="num">Transfer in/out (MT)</th><th class="num">Dispatched (MT)</th><th class="num">Closing (MT)</th><th></th>
             </tr>
           </thead>
           <tbody id="stock-body"></tbody>
@@ -766,6 +790,6 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
-<script src="app.js?v=36"></script>
+<script src="app.js?v=37"></script>
 </body>
 </html>

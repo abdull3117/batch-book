@@ -1118,6 +1118,8 @@
     if (jwAdminTools) jwAdminTools.hidden = role !== "admin";
     // Stock tab: a company can only read its own ledger — no entry form,
     // no company picker, no company column.
+    const xferCard = $("#xfer-card");
+    if (xferCard) xferCard.hidden = isCompany;
     const stockForm = $("#stock-entry-card");
     if (stockForm) stockForm.hidden = isCompany;
     const coFilter = $("#st-filter-company-field");
@@ -2436,14 +2438,19 @@
   }
   function stockRowFor(date, productId, companyId) {
     const key = stockKey(companyId);
-    return state.stock.find((s) => inFactory(s, stockScope) && s.date === date && s.productId === productId && stockKey(s.companyId) === key) || null;
+    return state.stock.find((s) => !isTransfer(s) && inFactory(s, stockScope) && s.date === date && s.productId === productId && stockKey(s.companyId) === key) || null;
   }
   // All distinct (date, companyId) buckets that exist for a product, from
   // either stock docs or tagged batch entries — used to build the ledger
   // and to find "the most recent prior date" per company.
   function stockBucketsFor(productId) {
     const map = new Map(); // key `${date} ${companyKey}` -> {date, companyId, companyName}
-    state.stock.filter((s) => inFactory(s, stockScope) && s.productId === productId).forEach((s) => {
+    // Transfers between factories create a regular-stock bucket on both sides.
+    state.stock.filter((s) => isTransfer(s) && s.productId === productId && (!stockScope || s.fromFactory === stockScope || s.toFactory === stockScope)).forEach((s) => {
+      const key = s.date + " ";
+      if (!map.has(key)) map.set(key, { date: s.date, companyId: "", companyName: "" });
+    });
+    state.stock.filter((s) => !isTransfer(s) && inFactory(s, stockScope) && s.productId === productId).forEach((s) => {
       const key = s.date + " " + stockKey(s.companyId);
       if (!map.has(key)) map.set(key, { date: s.date, companyId: s.companyId || "", companyName: s.companyName || "" });
     });
@@ -2506,7 +2513,19 @@
   function closingFor(date, productId, companyId) {
     const opening = openingFor(date, productId, companyId);
     const producedMT = producedFor(date, productId, companyId) / KG_PER_MT;
-    return opening + producedMT - dispatchedFor(date, productId, companyId);
+    return opening + producedMT + transferNetFor(date, productId, companyId) - dispatchedFor(date, productId, companyId);
+  }
+  function isTransfer(s) { return s && s.kind === "transfer"; }
+  // MT moved into (+) or out of (−) the factory in stockScope on this day.
+  // Transfers only move regular stock, never a job-work company's stock.
+  function transferNetFor(date, productId, companyId) {
+    if (companyId || !stockScope) return 0;
+    return state.stock.filter((s) => isTransfer(s) && s.date === date && s.productId === productId).reduce((a, s) => {
+      const q = Number(s.qty) || 0;
+      if (s.toFactory === stockScope) a += q;
+      if (s.fromFactory === stockScope) a -= q;
+      return a;
+    }, 0);
   }
 
   function suggestOpening(productId, date, companyId) {
@@ -2582,10 +2601,11 @@
     const opening = parseFloat($("#st-opening").value) || 0;
     const dispatched = parseFloat($("#st-dispatched").value) || 0;
     const producedMT = producedFor(date, productId, companyId) / KG_PER_MT;
-    const closing = opening + producedMT - dispatched;
+    const xfer = transferNetFor(date, productId, companyId);
+    const closing = opening + producedMT + xfer - dispatched;
     preview.hidden = false;
     preview.textContent = "Closing stock after this: " + fmtNum(closing, 2) + " MT" +
-      (producedMT ? " (" + fmtNum(opening, 2) + " opening + " + fmtNum(producedMT, 2) + " produced − " + fmtNum(dispatched, 2) + " dispatched)" : "");
+      ((producedMT || xfer) ? " (" + fmtNum(opening, 2) + " opening + " + fmtNum(producedMT, 2) + " produced" + (xfer ? (xfer > 0 ? " + " : " − ") + fmtNum(Math.abs(xfer), 2) + " transferred " + (xfer > 0 ? "in" : "out") : "") + " − " + fmtNum(dispatched, 2) + " dispatched)" : "");
   }
 
   async function submitStock() {
@@ -2627,6 +2647,7 @@
 
   function renderStock() {
     if (!$("#view-stock")) return;
+    renderTransfers();
     const body = $("#stock-body");
     body.innerHTML = "";
     const isCompany = state.role === "company";
@@ -2679,13 +2700,14 @@
     if (filterProduct) buckets = buckets.filter((b) => b.productId === filterProduct);
     buckets = buckets.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0)).slice(0, 200);
     if (!buckets.length) {
-      body.appendChild(el("tr", {}, [el("td", { colspan: isCompany ? "7" : "8", class: "empty-hint" }, ["No stock entries yet."])]));
+      body.appendChild(el("tr", {}, [el("td", { colspan: isCompany ? "8" : "9", class: "empty-hint" }, ["No stock entries yet."])]));
       return;
     }
     buckets.forEach((b) => {
       const opening = sumScopes(() => openingFor(b.date, b.productId, b.companyId));
       const producedMT = sumScopes(() => producedFor(b.date, b.productId, b.companyId)) / KG_PER_MT;
       const dispatched = sumScopes(() => dispatchedFor(b.date, b.productId, b.companyId));
+      const transfers = sumScopes(() => transferNetFor(b.date, b.productId, b.companyId));
       const closing = sumScopes(() => closingFor(b.date, b.productId, b.companyId));
       // Only a bucket backed by an actual saved Stock doc (an opening
       // override or a manually-entered dispatch) can be deleted — a
@@ -2701,6 +2723,7 @@
         companyCell,
         el("td", { class: "num" }, [fmtNum(opening, 2)]),
         el("td", { class: "num" }, [fmtNum(producedMT, 2)]),
+        el("td", { class: "num" }, [transfers ? (transfers > 0 ? "+" : "−") + fmtNum(Math.abs(transfers), 2) : "—"]),
         el("td", { class: "num" }, [fmtNum(dispatched, 2)]),
         el("td", { class: "num strong" }, [fmtNum(closing, 2)]),
         el("td", { class: "num" }, [
@@ -2713,6 +2736,65 @@
         ]),
       ]));
     });
+  }
+
+  // ---------- Transfers between factories ----------
+  function renderTransfers() {
+    const body = $("#xfer-body");
+    if (!body) return;
+    const itemSel = $("#xf-item");
+    if (itemSel && itemSel.dataset.n !== String(state.products.length)) {
+      const keep = itemSel.value;
+      itemSel.innerHTML = '<option value="">Pick a product…</option>' + state.products.map((p) => '<option value="' + p.id + '">' + p.name + '</option>').join("") + '<option value="__other__">Other item (raw material, cylinder…)</option>';
+      itemSel.value = keep;
+      itemSel.dataset.n = String(state.products.length);
+    }
+    const rows = state.stock.filter(isTransfer).filter((t) => !state.viewFactory || t.fromFactory === state.viewFactory || t.toFactory === state.viewFactory)
+      .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+    body.innerHTML = "";
+    if (!rows.length) { body.appendChild(el("tr", {}, [el("td", { colspan: "6", class: "empty-hint" }, ["No transfers yet."])])); return; }
+    rows.forEach((t) => {
+      body.appendChild(el("tr", {}, [
+        el("td", {}, [t.date]),
+        el("td", {}, [t.fromFactory + " → " + t.toFactory]),
+        el("td", {}, [t.productId ? productName(t.productId) : (t.itemName || "")]),
+        el("td", { class: "num" }, [fmtNum(t.qty, 2) + " " + (t.unit || "MT")]),
+        el("td", {}, [t.productId ? "Stock ledger" : "Note only", t.note ? el("div", { class: "hint" }, [t.note]) : null]),
+        el("td", { class: "num" }, [state.role === "admin" ? el("button", { class: "icon-btn danger", title: "Delete this transfer", onclick: () => deleteTransfer(t.id) }, ["✕"]) : ""]),
+      ]));
+    });
+  }
+  function toggleXferOther() {
+    const other = $("#xf-item") && $("#xf-item").value === "__other__";
+    $all(".xf-other").forEach((e) => { e.hidden = !other; });
+    if ($("#xf-unit")) { if (!other) $("#xf-unit").value = "MT"; $("#xf-unit").disabled = !other; }
+  }
+  async function submitTransfer() {
+    const date = $("#xf-date").value, from = $("#xf-from").value, to = $("#xf-to").value, item = $("#xf-item").value;
+    const qty = parseFloat($("#xf-qty").value) || 0, note = $("#xf-note").value.trim();
+    if (!date) return toast("Pick the date.", "error");
+    if (from === to) return toast("From and To must be different factories.", "error");
+    if (!item) return toast("Pick what was transferred.", "error");
+    if (qty <= 0) return toast("Enter the quantity.", "error");
+    const isOther = item === "__other__";
+    const itemName = isOther ? $("#xf-other-name").value.trim() : "";
+    if (isOther && !itemName) return toast("Type the item name.", "error");
+    const payload = { kind: "transfer", date, fromFactory: from, toFactory: to, productId: isOther ? "" : item, itemName, qty, unit: isOther ? ($("#xf-unit").value.trim() || "nos") : "MT", note, createdAt: new Date().toISOString() };
+    const id = "xfer_" + date + "_" + Date.now();
+    try {
+      if (state.db) await state.db.collection("stock").doc(id).set(payload);
+      else { payload.id = id; state.stock.unshift(payload); renderStock(); renderTransfers(); }
+      toast("Transfer saved: " + fmtNum(qty, 2) + " " + payload.unit + " " + (isOther ? itemName : productName(item)) + ", " + from + " → " + to + ".", "success");
+      $("#xf-qty").value = ""; $("#xf-note").value = ""; if ($("#xf-other-name")) $("#xf-other-name").value = "";
+    } catch (e) { toast("Could not save transfer: " + e.message, "error"); }
+  }
+  async function deleteTransfer(id) {
+    if (!confirm("Delete this transfer? Both factories' stock will be recalculated.")) return;
+    try {
+      if (state.db) await state.db.collection("stock").doc(id).delete();
+      else { state.stock = state.stock.filter((s) => s.id !== id); renderStock(); renderTransfers(); }
+      toast("Transfer deleted.", "warn");
+    } catch (e) { toast("Could not delete: " + e.message, "error"); }
   }
 
   async function deleteStockEntry(id, bucket) {
@@ -3351,6 +3433,9 @@
     $all(".factory-switch button").forEach((b) => b.addEventListener("click", () => setViewFactory(b.dataset.factory)));
     $all(".factory-view-select").forEach((sel) => sel.addEventListener("change", () => setViewFactory(sel.value)));
     if ($("#st-factory")) $("#st-factory").addEventListener("change", stockAutofillOpening);
+    if ($("#xf-item")) $("#xf-item").addEventListener("change", toggleXferOther);
+    if ($("#btn-xfer-save")) $("#btn-xfer-save").addEventListener("click", submitTransfer);
+    if ($("#xf-date")) $("#xf-date").value = todayStr();
     let savedFactory = "";
     try { savedFactory = localStorage.getItem("bbViewFactory") || ""; } catch (e) { /* ignore */ }
     wireEvents();
