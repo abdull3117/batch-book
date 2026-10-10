@@ -2527,7 +2527,12 @@
       .reduce((s, e) => s + (e.outputQty || 0), 0);
   }
 
-  function stockAutofillOpening() {
+  // The stock form works on the factory picked in its own Factory box.
+  function stockFormFactory() { return ($("#st-factory") && $("#st-factory").value) || "Orathur"; }
+  function withScope(f, fn) { const prev = stockScope; stockScope = f; try { return fn(); } finally { stockScope = prev; } }
+
+  function stockAutofillOpening() { return withScope(stockFormFactory(), stockAutofillOpeningInner); }
+  function stockAutofillOpeningInner() {
     const productId = $("#st-product").value;
     const date = $("#st-date").value;
     const companyId = $("#st-company") ? $("#st-company").value : "";
@@ -2563,7 +2568,8 @@
   // on a bucket's day one where it's still editable) so the person can
   // see the remaining balance immediately, without changing what
   // "Opening stock" itself means or saving anything yet.
-  function updateStockClosingPreview() {
+  function updateStockClosingPreview() { return withScope(stockFormFactory(), updateStockClosingPreviewInner); }
+  function updateStockClosingPreviewInner() {
     const preview = $("#st-closing-preview");
     if (!preview) return;
     const productId = $("#st-product").value;
@@ -2589,10 +2595,10 @@
     const dispatched = parseFloat($("#st-dispatched").value) || 0;
     const opening = parseFloat($("#st-opening").value) || 0;
     if (!productId || !date) return toast("Pick a product and date.", "error");
-    if (!state.viewFactory) return toast("Pick Orathur or Vikravandi at the top first — stock is entered for one factory at a time.", "error");
+    const factory = stockFormFactory();
     // Orathur keeps the original document ids so its existing stock history carries on.
-    const docId = date + "_" + productId + (companyId ? "_" + companyId : "") + (state.viewFactory === "Orathur" ? "" : "_" + state.viewFactory);
-    const payload = { date, productId, dispatched, opening, factory: state.viewFactory, updatedAt: new Date().toISOString() };
+    const docId = date + "_" + productId + (companyId ? "_" + companyId : "") + (factory === "Orathur" ? "" : "_" + factory);
+    const payload = { date, productId, dispatched, opening, factory, updatedAt: new Date().toISOString() };
     let companyName = "";
     if (companyId) {
       const company = jobCompanyById(companyId);
@@ -2609,7 +2615,7 @@
         state.stock.unshift(payload);
       }
       toast(
-        "Stock entry saved for " + productName(productId) + " on " + date +
+        "Stock entry saved for " + productName(productId) + " (" + factory + ") on " + date +
           (companyId ? " — " + companyName : ""),
         "success"
       );
@@ -3290,8 +3296,8 @@
     try { localStorage.setItem("bbViewFactory", state.viewFactory); } catch (e) { /* ignore */ }
     $all(".factory-switch button").forEach((b) => b.classList.toggle("active", b.dataset.factory === state.viewFactory));
     document.documentElement.setAttribute("data-factory", state.viewFactory || "both");
-    const note = $("#stock-factory-note");
-    if (note) note.hidden = !!state.viewFactory;
+    $all(".factory-view-select").forEach((sel) => { sel.value = state.viewFactory; });
+    if (state.viewFactory && $("#st-factory")) $("#st-factory").value = state.viewFactory;
     // New batches default to the factory being viewed.
     if (state.viewFactory && $("#f-factory") && !state.editingEntryId) $("#f-factory").value = state.viewFactory;
     if (!silent) {
@@ -3343,6 +3349,8 @@
       if (b) b.click();
     } catch (e) { /* ignore */ }
     $all(".factory-switch button").forEach((b) => b.addEventListener("click", () => setViewFactory(b.dataset.factory)));
+    $all(".factory-view-select").forEach((sel) => sel.addEventListener("change", () => setViewFactory(sel.value)));
+    if ($("#st-factory")) $("#st-factory").addEventListener("change", stockAutofillOpening);
     let savedFactory = "";
     try { savedFactory = localStorage.getItem("bbViewFactory") || ""; } catch (e) { /* ignore */ }
     wireEvents();

@@ -534,3 +534,5 @@ html[data-view="compact"] .factory-switch button { padding: 5px 11px; }
 .field input, .field select, .field textarea { min-width: 0; max-width: 100%; }
 @media (max-width: 640px) { .factory-switch { order: 3; } }
 @media (max-width: 640px) { .mat-search-row { flex-wrap: wrap; } .mat-search-row input { min-width: 0; flex: 1 1 100%; } .mat-search-row .hint { white-space: normal; } }
+.field-row.cols-5 { grid-template-columns: repeat(5, 1fr); }
+@media (max-width: 900px) { .field-row.cols-5 { grid-template-columns: 1fr 1fr; } }

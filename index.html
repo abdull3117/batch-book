@@ -12,7 +12,7 @@
 <!-- Cache-busting: GitHub Pages caches these for 10 minutes (Cache-Control: max-age=600).
      Bump the ?v= number on app.js, style.css and firebase-config.js below every time
      any of those files are redeployed, so users don't keep running a stale cached copy. -->
-<link rel="stylesheet" href="style.css?v=15" />
+<link rel="stylesheet" href="style.css?v=16" />
 </head>
 <body>
 
@@ -239,6 +239,10 @@
           <label for="rep-company">Company</label>
           <select id="rep-company"></select>
         </div>
+        <div class="field">
+          <label for="rep-factory">Factory</label>
+          <select id="rep-factory" class="factory-view-select"><option value="">Both (consolidated)</option><option value="Orathur">Orathur</option><option value="Vikravandi">Vikravandi</option></select>
+        </div>
         <button class="btn btn-secondary btn-small" id="rep-preset-month">This month</button>
         <button class="btn btn-secondary btn-small" id="rep-preset-all">All time</button>
       </div>
@@ -318,11 +322,14 @@
 
     <div class="card" id="stock-entry-card">
       <div class="card-title">Add / update a stock entry</div>
-      <p class="factory-note" id="stock-factory-note" hidden>You're viewing <strong>both factories together</strong>. Pick <strong>Orathur</strong> or <strong>Vikravandi</strong> at the top to enter stock for that factory.</p>
-      <div class="field-row">
+      <div class="field-row cols-5">
         <div class="field">
           <label for="st-date">Date</label>
           <input type="date" id="st-date" />
+        </div>
+        <div class="field">
+          <label for="st-factory">Factory</label>
+          <select id="st-factory"><option value="Orathur">Orathur</option><option value="Vikravandi">Vikravandi</option></select>
         </div>
         <div class="field">
           <label for="st-product">Product</label>
@@ -363,6 +370,10 @@
         <div class="field" style="max-width:220px;" id="st-filter-company-field">
           <label for="st-filter-company">Company</label>
           <select id="st-filter-company"></select>
+        </div>
+        <div class="field" style="max-width:200px;">
+          <label for="st-filter-factory">Factory</label>
+          <select id="st-filter-factory" class="factory-view-select"><option value="">Both (consolidated)</option><option value="Orathur">Orathur</option><option value="Vikravandi">Vikravandi</option></select>
         </div>
       </div>
       <div class="table-wrap">
@@ -434,6 +445,10 @@
         <div class="field">
           <label for="jw-rep-company">Company</label>
           <select id="jw-rep-company"></select>
+        </div>
+        <div class="field">
+          <label for="jw-rep-factory">Factory</label>
+          <select id="jw-rep-factory" class="factory-view-select"><option value="">Both (consolidated)</option><option value="Orathur">Orathur</option><option value="Vikravandi">Vikravandi</option></select>
         </div>
         <button class="btn btn-secondary btn-small" id="jw-rep-preset-month">This month</button>
         <button class="btn btn-secondary btn-small" id="jw-rep-preset-all">All time</button>
@@ -751,6 +766,6 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
-<script src="app.js?v=35"></script>
+<script src="app.js?v=36"></script>
 </body>
 </html>
