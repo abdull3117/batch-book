@@ -125,6 +125,119 @@
     return monthlyProcessingCostTotal(labour) / budgetMT;
   }
 
+  // ---------------------------------------------------------------
+  // Floating monthly processing rate. Once a month is over, its batches
+  // are re-costed at that month's ACTUAL processing expenses divided by
+  // that month's ACTUAL output, instead of the fixed budget ÷ budgeted MT.
+  // For each cost head the month uses, in order: a figure typed in here
+  // (Settings → Monthly actual processing cost), else the bills logged in
+  // the EMR Tracker's Expenses tab, else the monthly budget above. The
+  // current month stays on the budget rate until it closes.
+  // ---------------------------------------------------------------
+  const EXPENSE_CATEGORY_FIELD = {
+    "EB Bills": "ebCost",
+    "Fuel & Transport": "fuelCost",
+    "Maintenance & Repairs": "maintenanceCost",
+    "Salaries & Wages": "staffSalaries",
+    "Miscellaneous": "departmentExpenses",
+  };
+  const PROCESSING_FIELD_LABELS = {
+    ebCost: "EB", fuelCost: "Fuel", maintenanceCost: "Maintenance", electricalMaintenanceCost: "Electrical maint.",
+    stitchingExpense: "Stitching", sackExpenses: "Sack", departmentExpenses: "Department / misc", staffSalaries: "Staff salaries",
+  };
+  function monthOf(date) { return String(date || "").slice(0, 7); }
+  function isClosedMonth(m) { return /^\d{4}-\d{2}$/.test(m) && m < todayStr().slice(0, 7); }
+
+  // Each cost head's figure for month m and where it came from.
+  function monthProcessingActuals(m) {
+    const fromBills = {};
+    state.trackerExpenses.forEach((d) => {
+      if (monthOf(d.date) !== m) return;
+      const k = EXPENSE_CATEGORY_FIELD[d.category];
+      if (k) fromBills[k] = (fromBills[k] || 0) + (Number(d.amount) || 0);
+    });
+    const manual = state.processingMonths[m] || {};
+    const fields = {};
+    let total = 0;
+    PROCESSING_BREAKDOWN_FIELDS.forEach((k) => {
+      let amount, source;
+      if (manual[k] !== undefined && manual[k] !== null && manual[k] !== "") { amount = Number(manual[k]) || 0; source = "manual"; }
+      else if (fromBills[k]) { amount = fromBills[k]; source = "bills"; }
+      else { amount = Number(state.labour[k]) || 0; source = "budget"; }
+      fields[k] = { amount, source };
+      total += amount;
+    });
+    return { fields, total };
+  }
+
+  // ₹/MT for the batches of a closed month that don't have a fixed
+  // per-product processing cost. Products with a fixed cost keep it, and
+  // the rest of the month's actual pool is spread over the other batches'
+  // output so the whole month's actual cost is absorbed.
+  function floatingRateFromRows(m, rows) {
+    if (!isClosedMonth(m)) return null;
+    let fixed = 0, floatKg = 0;
+    rows.forEach((e) => {
+      const ov = productProcessingCostOverride(e.productId);
+      if (ov != null) fixed += ov; else floatKg += Number(e.outputQty) || 0;
+    });
+    if (floatKg <= 0) return null;
+    return Math.max(0, monthProcessingActuals(m).total - fixed) / (floatKg / KG_PER_MT);
+  }
+  function floatingRateFor(m) {
+    return floatingRateFromRows(m, state.entries.filter((e) => monthOf(e.date) === m));
+  }
+
+  // Re-costs every batch of one closed month at that month's floating
+  // rate. Only writes batches whose processing cost actually changes.
+  async function recalcMonthProcessing(m) {
+    if (!state.db || !isClosedMonth(m)) return 0;
+    const snap = await state.db.collection("entries").where("date", ">=", m + "-01").where("date", "<=", m + "-31").get();
+    const rows = snap.docs.map((d) => Object.assign({ id: d.id }, d.data()));
+    const rate = floatingRateFromRows(m, rows);
+    if (rate == null) return 0;
+    const batch = state.db.batch();
+    let n = 0;
+    rows.forEach((e) => {
+      const ov = productProcessingCostOverride(e.productId);
+      const proc = ov != null ? ov : rate * ((Number(e.outputQty) || 0) / KG_PER_MT);
+      if (Math.abs(proc - (Number(e.processingCost) || 0)) < 0.5 && e.processingRateMonth === m) return;
+      const totalCost = (Number(e.rmCost) || 0) + proc + (Number(e.labourCost) || 0);
+      const fields = {
+        processingCost: proc, totalCost,
+        costPerKg: e.outputQty > 0 ? totalCost / e.outputQty : 0,
+        processingRatePerMT: ov != null ? null : rate, processingRateMonth: m,
+      };
+      if (e.jobworkCompanyId) fields.jobworkProfit = (Number(e.jobworkRevenue) || 0) - totalCost;
+      batch.update(state.db.collection("entries").doc(e.id), fields);
+      n++;
+    });
+    if (n) await batch.commit();
+    return n;
+  }
+
+  async function recalcAllClosedMonths(manual) {
+    if (!state.db) { if (manual) toast("Open the published link to recalculate.", "warn"); return; }
+    const months = Array.from(new Set(state.entries.map((e) => monthOf(e.date)))).filter(isClosedMonth).sort();
+    let changed = 0;
+    try {
+      for (const m of months) changed += await recalcMonthProcessing(m);
+      if (manual || changed) toast(changed ? "Processing cost re-costed on " + changed + " batch" + (changed === 1 ? "" : "es") + " using each month's actual rate." : "All past months are already at their actual rate.", "success");
+    } catch (e) {
+      toast("Could not recalculate processing costs: " + e.message, "error");
+    }
+  }
+
+  // Runs automatically for admins once bills, manual figures and batches
+  // have all loaded, and again whenever any of them changes.
+  let autoRecalcTimer = null;
+  function maybeAutoRecalc() {
+    const f = state.floatLoaded;
+    if (state.role !== "admin" || !state.db || !f.expenses || !f.months || !f.entries) return;
+    clearTimeout(autoRecalcTimer);
+    autoRecalcTimer = setTimeout(() => recalcAllClosedMonths(false), 2500);
+  }
+
   // Units offered everywhere a material or product's unit is picked.
   const UNIT_OPTIONS = ["Kg", "Litre", "Metric Tonne"];
 
@@ -203,6 +316,9 @@
     reportFilter: { start: "", end: "", productId: "" },
     editingEntryId: null, // set while the form is editing an existing batch instead of logging a new one
     jobworkCompanies: DEFAULT_JOBWORK_COMPANIES.slice(),
+    trackerExpenses: [], // read-only copy of the EMR Tracker's expense log (tracker_expenses) — actual monthly bills
+    processingMonths: {}, // settings/processingMonths.months — manual actuals per month: { "YYYY-MM": { ebCost: n, ... } }
+    floatLoaded: { expenses: false, months: false, entries: false },
   };
 
   // ---------------------------------------------------------------
@@ -317,7 +433,7 @@
     return Number(company.labourCost) || 0;
   }
 
-  function computeCosts(materialsQty, outputQty, operators, loadmen, productId, companyId) {
+  function computeCosts(materialsQty, outputQty, operators, loadmen, productId, companyId, date) {
     let rmCost = 0;
     state.materials.forEach((m) => {
       const q = Number(materialsQty[m.id]) || 0;
@@ -328,7 +444,8 @@
     if (override != null) {
       processingCost = override;
     } else {
-      const perMT = processingCostPerMT(state.labour);
+      const floating = date ? floatingRateFor(monthOf(date)) : null;
+      const perMT = floating != null ? floating : processingCostPerMT(state.labour);
       processingCost = perMT != null
         ? perMT * (outputQty / KG_PER_MT)
         : (Number(state.labour.processingCost) || 0);
@@ -828,12 +945,33 @@
     db.collection("entries").orderBy("createdAt", "desc").limit(500).onSnapshot(
       (snap) => {
         state.entries = snap.docs.map((d) => Object.assign({ id: d.id }, d.data()));
+        state.floatLoaded.entries = true;
+        renderFloatingRates();
+        maybeAutoRecalc();
         renderTodayList();
         renderReports();
         renderStock();
         renderJobPnL();
       },
       (e) => { toast("Sync error loading entries: " + e.message, "error"); }
+    );
+    db.collection("tracker_expenses").limit(5000).onSnapshot(
+      (snap) => {
+        state.trackerExpenses = snap.docs.map((d) => d.data());
+        state.floatLoaded.expenses = true;
+        renderFloatingRates();
+        maybeAutoRecalc();
+      },
+      () => { state.floatLoaded.expenses = true; maybeAutoRecalc(); }
+    );
+    db.doc("settings/processingMonths").onSnapshot(
+      (snap) => {
+        state.processingMonths = (snap.exists && snap.data().months) || {};
+        state.floatLoaded.months = true;
+        renderFloatingRates();
+        maybeAutoRecalc();
+      },
+      () => { state.floatLoaded.months = true; maybeAutoRecalc(); }
     );
     db.collection("stock").orderBy("date", "desc").limit(500).onSnapshot(
       (snap) => {
@@ -931,6 +1069,7 @@
     });
     const costBlock = $("#cost-details-block");
     if (costBlock) costBlock.hidden = isTeam || isCompany;
+    maybeAutoRecalc();
     // Job work rates can be viewed by anyone, but only admin can add
     // companies/products or change a rate.
     const jwAdminTools = $("#jw-admin-tools");
@@ -1218,7 +1357,7 @@
     const mats = getFormMaterialsQty();
     const productId = $("#f-product") ? $("#f-product").value : "";
     const companyId = $("#f-jobwork-company") ? $("#f-jobwork-company").value : "";
-    const c = computeCosts(mats, outputQty, operators, loadmen, productId, companyId);
+    const c = computeCosts(mats, outputQty, operators, loadmen, productId, companyId, $("#f-date") ? $("#f-date").value : "");
     $("#sum-rm").textContent = fmtINR(c.rmCost);
     $("#sum-processing").textContent = fmtINR(c.processingCost);
     // With the shared day crew on (and no product/company labour
@@ -1340,7 +1479,7 @@
       const enteredRate = rateInp ? Number(rateInp.value) || 0 : 0;
       if (enteredRate <= 0) return toast("Enter the rate agreed for this order first.", "error");
     }
-    const c = computeCosts(mats, outputQty, operators, loadmen, productId, jobworkCompanyId);
+    const c = computeCosts(mats, outputQty, operators, loadmen, productId, jobworkCompanyId, date);
     const editingId = state.editingEntryId;
     const existing = editingId ? state.entries.find((e) => e.id === editingId) : null;
     const payload = {
@@ -1422,6 +1561,7 @@
       }
       if (useDayLabour) await saveDayLabour(date, dayOperators, dayLoadmen);
       await recomputeDayLabourSplit(date);
+      if (isClosedMonth(monthOf(date))) await recalcMonthProcessing(monthOf(date));
       if (!state.db) {
         renderTodayList();
         renderReports();
@@ -1718,6 +1858,7 @@
         // listener hasn't come back yet.
         state.entries = state.entries.filter((e) => e.id !== id);
         if (date) await recomputeDayLabourSplit(date);
+        if (date && isClosedMonth(monthOf(date))) await recalcMonthProcessing(monthOf(date));
       } else {
         state.entries = state.entries.filter((e) => e.id !== id);
         if (date) await recomputeDayLabourSplit(date);
@@ -2535,6 +2676,7 @@
   }
 
   function renderSettingsLabour() {
+    renderFloatingRates();
     if ($("#s-operator-rate")) $("#s-operator-rate").value = state.labour.operatorRate;
     if ($("#s-loadman-rate")) $("#s-loadman-rate").value = state.labour.loadmanRate;
     if ($("#s-processing-cost")) $("#s-processing-cost").value = state.labour.processingCost;
@@ -2570,6 +2712,61 @@
     rateEl.textContent = perMT != null
       ? fmtINR(perMT) + " / MT"
       : "Not set up — using fallback";
+  }
+
+  function renderFloatingRates() {
+    const wrap = $("#float-rates-wrap");
+    if (!wrap) return;
+    const months = Array.from(new Set(state.entries.map((e) => monthOf(e.date)))).filter((m) => /^\d{4}-\d{2}$/.test(m)).sort().reverse();
+    if (!months.length) { wrap.innerHTML = '<p class="hint">No batches yet.</p>'; return; }
+    const tag = { bills: "", manual: " ✎", budget: " *" };
+    let html = '<div class="table-wrap"><table><thead><tr><th>Month</th><th class="num">Output (MT)</th>' +
+      PROCESSING_BREAKDOWN_FIELDS.map((k) => '<th class="num">' + PROCESSING_FIELD_LABELS[k] + '</th>').join("") +
+      '<th class="num">Total</th><th class="num">Rate / MT</th></tr></thead><tbody>';
+    const budgetRate = processingCostPerMT(state.labour);
+    months.forEach((m) => {
+      const rows = state.entries.filter((e) => monthOf(e.date) === m);
+      const mt = rows.reduce((a, e) => a + (Number(e.outputQty) || 0), 0) / KG_PER_MT;
+      const closed = isClosedMonth(m);
+      const a = monthProcessingActuals(m);
+      const rate = closed ? floatingRateFromRows(m, rows) : null;
+      const label = new Date(m + "-01T00:00:00").toLocaleDateString("en-IN", { month: "short", year: "numeric" });
+      html += '<tr><td>' + label + (closed ? "" : ' <span class="hint">(running — budget rate)</span>') + '</td><td class="num">' + fmtNum(mt, 1) + '</td>' +
+        PROCESSING_BREAKDOWN_FIELDS.map((k) => {
+          const f = closed ? a.fields[k] : { amount: Number(state.labour[k]) || 0, source: "budget" };
+          return '<td class="num"' + (f.source === "budget" ? ' style="opacity:.6"' : '') + '>' + fmtINR(f.amount).replace(/\.00$/, "") + tag[f.source] + '</td>';
+        }).join("") +
+        '<td class="num"><strong>' + fmtINR(closed ? a.total : monthlyProcessingCostTotal(state.labour)).replace(/\.00$/, "") + '</strong></td>' +
+        '<td class="num"><strong>' + (closed ? (rate != null ? fmtINR(rate) : "—") : (budgetRate != null ? fmtINR(budgetRate) : "—")) + '</strong></td></tr>';
+    });
+    html += '</tbody></table></div><p class="hint" style="margin-top:6px;">No mark = bills from the EMR Tracker Expenses tab &middot; ✎ = typed in below &middot; * (faded) = monthly budget, used because no bill is logged for that head yet.</p>';
+    wrap.innerHTML = html;
+    const ms = $("#float-month");
+    if (ms) {
+      const keep = ms.value;
+      ms.innerHTML = months.filter(isClosedMonth).map((m) => '<option value="' + m + '">' + new Date(m + "-01T00:00:00").toLocaleDateString("en-IN", { month: "short", year: "numeric" }) + '</option>').join("");
+      if (keep) ms.value = keep;
+    }
+    const hs = $("#float-head");
+    if (hs && !hs.options.length) hs.innerHTML = PROCESSING_BREAKDOWN_FIELDS.map((k) => '<option value="' + k + '">' + PROCESSING_FIELD_LABELS[k] + '</option>').join("");
+  }
+
+  async function saveFloatingManual() {
+    const m = $("#float-month").value, k = $("#float-head").value, raw = $("#float-amount").value.trim();
+    if (!m || !k) return;
+    const months = JSON.parse(JSON.stringify(state.processingMonths || {}));
+    months[m] = months[m] || {};
+    if (raw === "") delete months[m][k]; else months[m][k] = parseFloat(raw) || 0;
+    try {
+      if (state.db) await state.db.doc("settings/processingMonths").set({ months, updatedAt: new Date().toISOString() });
+      state.processingMonths = months;
+      $("#float-amount").value = "";
+      toast(raw === "" ? "Cleared — that month now uses bills or budget for " + PROCESSING_FIELD_LABELS[k] + "." : PROCESSING_FIELD_LABELS[k] + " for that month saved.", "success");
+      renderFloatingRates();
+      await recalcMonthProcessing(m);
+    } catch (e) {
+      toast("Could not save: " + e.message, "error");
+    }
   }
 
   async function saveMaterialRates() {
@@ -2901,6 +3098,8 @@
 
     // Processing cost breakdown — live readout as the user types, before saving.
     $("#btn-save-processing-breakdown").addEventListener("click", saveProcessingBreakdown);
+    if ($("#btn-float-save")) $("#btn-float-save").addEventListener("click", saveFloatingManual);
+    if ($("#btn-float-recalc")) $("#btn-float-recalc").addEventListener("click", () => recalcAllClosedMonths(true));
     [
       "#s-eb-cost", "#s-fuel-cost", "#s-maintenance-cost", "#s-electrical-maintenance-cost",
       "#s-stitching-expense", "#s-sack-expenses", "#s-department-expenses", "#s-staff-salaries",
