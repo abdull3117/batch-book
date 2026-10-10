@@ -12,7 +12,7 @@
 <!-- Cache-busting: GitHub Pages caches these for 10 minutes (Cache-Control: max-age=600).
      Bump the ?v= number on app.js, style.css and firebase-config.js below every time
      any of those files are redeployed, so users don't keep running a stale cached copy. -->
-<link rel="stylesheet" href="style.css?v=14" />
+<link rel="stylesheet" href="style.css?v=15" />
 </head>
 <body>
 
@@ -48,6 +48,11 @@
     <button class="tab-btn" data-tab="stock">📦 Stock</button>
     <button class="tab-btn" data-tab="jobwork" id="tab-btn-jobwork">🤝 Job Work</button>
     <button class="tab-btn" data-tab="settings" id="tab-btn-settings">⚙️ Settings</button>
+  </div>
+  <div class="factory-switch" role="group" aria-label="Factory">
+    <button type="button" data-factory="">Both</button>
+    <button type="button" data-factory="Orathur">Orathur</button>
+    <button type="button" data-factory="Vikravandi">Vikravandi</button>
   </div>
   <div class="sync">
     <span class="sync-dot connecting" id="sync-dot"></span>
@@ -246,6 +251,12 @@
       </div>
     </div>
 
+    <div class="card" id="factory-summary-card" style="margin-top:16px;">
+      <div class="card-title">Factory-wise statement</div>
+      <p class="hint" style="margin:-6px 0 10px;">Each factory on its own, and both together. Uses the date, product and company filters above.</p>
+      <div id="factory-summary"></div>
+    </div>
+
     <div class="card">
       <div class="chart-row">
         <div>
@@ -307,6 +318,7 @@
 
     <div class="card" id="stock-entry-card">
       <div class="card-title">Add / update a stock entry</div>
+      <p class="factory-note" id="stock-factory-note" hidden>You're viewing <strong>both factories together</strong>. Pick <strong>Orathur</strong> or <strong>Vikravandi</strong> at the top to enter stock for that factory.</p>
       <div class="field-row">
         <div class="field">
           <label for="st-date">Date</label>
@@ -739,6 +751,6 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
-<script src="app.js?v=34"></script>
+<script src="app.js?v=35"></script>
 </body>
 </html>

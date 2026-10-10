@@ -505,3 +505,32 @@ html[data-view="compact"] .settings-pane > .card + .card, html[data-view="compac
 #view-settings .btn { margin-top: 12px; padding: 8px 18px; font-size: .84rem; }
 #view-settings .btn-row .btn, #view-settings .btn-row .btn-small { margin-top: 0; }
 #view-settings .add-item-row .btn, #view-settings td .btn { margin-top: 0; }
+
+/* ---------- Factory switcher ---------- */
+.factory-switch { display: inline-flex; background: var(--surface-2); border: 2px solid var(--border-strong); border-radius: 999px; padding: 3px; gap: 2px; }
+.factory-switch button {
+  border: none; background: transparent; color: var(--text-muted); cursor: pointer;
+  font-family: var(--font-display); font-weight: 700; font-size: .8rem; padding: 6px 12px; border-radius: 999px;
+}
+.factory-switch button:hover { color: var(--text); }
+.factory-switch button.active { background: var(--blue); color: #fff; box-shadow: var(--shadow-sm); }
+html[data-view="compact"] .factory-switch button { padding: 5px 11px; }
+.factory-note { background: var(--yellow-soft); border-radius: var(--radius-sm); padding: 8px 12px; font-size: .84rem; margin: 0 0 10px; }
+#factory-summary tr.fs-total td { border-top: 3px solid var(--border-strong); }
+#factory-summary tr.fs-current td { background: var(--blue-soft); }
+#factory-summary-card { margin-bottom: 16px; }
+/* keep the top bar on one row with the factory switcher */
+@media (min-width: 1000px) {
+  html[data-view="compact"] .topbar { gap: 10px; flex-wrap: nowrap; }
+  html[data-view="compact"] .tab-btn { padding: 7px 10px; }
+  html[data-view="compact"] #sync-label { display: none; }
+  html[data-view="compact"] .brand-text .sub { display: none; }
+  html[data-view="compact"] .sync { gap: 6px; }
+  html[data-view="compact"] .sync .btn-small { padding: 5px 10px; }
+}
+/* phones: never let the batch form push past the screen edge */
+.entry-layout > * { min-width: 0; }
+.field { min-width: 0; }
+.field input, .field select, .field textarea { min-width: 0; max-width: 100%; }
+@media (max-width: 640px) { .factory-switch { order: 3; } }
+@media (max-width: 640px) { .mat-search-row { flex-wrap: wrap; } .mat-search-row input { min-width: 0; flex: 1 1 100%; } .mat-search-row .hint { white-space: normal; } }

@@ -151,6 +151,15 @@
   // Factories — every batch is tagged with the one it was made at, and
   // each factory's month is costed from its own bills and its own output.
   const FACTORIES = ["Orathur", "Vikravandi"];
+  // Records from before factories were tracked (and stock docs saved
+  // without one) all belong to Orathur.
+  function factoryOf(x) { return x && FACTORIES.indexOf(x.factory) !== -1 ? x.factory : "Orathur"; }
+  function inFactory(x, f) { return !f || factoryOf(x) === f; }
+  function inView(x) { return inFactory(x, state.viewFactory); }
+  // Which factory the stock ledger's helpers work on. Equal to the
+  // factory picked at the top, or switched factory-by-factory when the
+  // consolidated (both) view sums the two ledgers.
+  let stockScope = "";
   // A month is costed per factory once every batch in it is tagged;
   // until then the whole month is costed company-wide (both factories'
   // bills over both factories' output), so nothing is left unallocated.
@@ -348,6 +357,7 @@
     reportFilter: { start: "", end: "", productId: "" },
     editingEntryId: null, // set while the form is editing an existing batch instead of logging a new one
     jobworkCompanies: DEFAULT_JOBWORK_COMPANIES.slice(),
+    viewFactory: "", // "" = both factories (consolidated), or "Orathur" / "Vikravandi"
     trackerExpenses: [], // read-only copy of the EMR Tracker's expense log (tracker_expenses) — actual monthly bills
     processingMonths: {}, // settings/processingMonths.months — manual actuals per month: { "YYYY-MM": { ebCost: n, ... } }
     floatLoaded: { expenses: false, months: false, entries: false },
@@ -1640,7 +1650,7 @@
     if (!sel) return;
     dateVal = dateVal || ($("#f-date") ? $("#f-date").value || todayStr() : todayStr());
     const counts = {};
-    state.entries.forEach((e) => { if (e.date) counts[e.date] = (counts[e.date] || 0) + 1; });
+    state.entries.forEach((e) => { if (e.date && inView(e)) counts[e.date] = (counts[e.date] || 0) + 1; });
     if (!(dateVal in counts)) counts[dateVal] = 0; // list the currently selected date even with 0 batches
     const dates = Object.keys(counts).sort().reverse();
     sel.innerHTML = "";
@@ -1655,8 +1665,8 @@
     const host = $("#today-list");
     const dateVal = $("#f-date") ? $("#f-date").value || todayStr() : todayStr();
     populateDateJump(dateVal);
-    const rows = state.entries.filter((e) => e.date === dateVal);
-    $("#today-list-label").textContent = "Batches logged for " + dateVal +
+    const rows = state.entries.filter((e) => e.date === dateVal && inView(e));
+    $("#today-list-label").textContent = "Batches logged for " + dateVal + (state.viewFactory ? " — " + state.viewFactory : "") +
       (rows.length ? " (" + rows.length + (rows.length === 1 ? " batch" : " batches") + ")" : "");
     host.innerHTML = "";
     if (!rows.length) {
@@ -2014,6 +2024,7 @@
     const end = $("#jw-rep-end") ? $("#jw-rep-end").value : "";
     const companyId = $("#jw-rep-company") ? $("#jw-rep-company").value : "";
     return state.entries.filter((e) => {
+      if (!inView(e)) return false;
       if (!e.jobworkCompanyId) return false;
       if (start && e.date < start) return false;
       if (end && e.date > end) return false;
@@ -2153,6 +2164,7 @@
     const productId = $("#rep-product") ? $("#rep-product").value : "";
     const companyId = $("#rep-company") ? $("#rep-company").value : "";
     return state.entries.filter((e) => {
+      if (!inView(e)) return false;
       if (start && e.date < start) return false;
       if (end && e.date > end) return false;
       if (productId && e.productId !== productId) return false;
@@ -2161,8 +2173,34 @@
     });
   }
 
+  // Factory-wise statement for the Reports date/product/company filters,
+  // with a consolidated line for both factories together.
+  function renderFactorySummary() {
+    const host = $("#factory-summary");
+    if (!host) return;
+    const saved = state.viewFactory;
+    state.viewFactory = "";
+    const all = filteredEntries();
+    state.viewFactory = saved;
+    const sum = (rows) => {
+      const t = { n: rows.length, kg: 0, rm: 0, proc: 0, lab: 0, tot: 0, jrev: 0 };
+      rows.forEach((e) => {
+        t.kg += Number(e.outputQty) || 0; t.rm += Number(e.rmCost) || 0; t.proc += Number(e.processingCost) || 0;
+        t.lab += Number(e.labourCost) || 0; t.tot += Number(e.totalCost) || 0; t.jrev += Number(e.jobworkRevenue) || 0;
+      });
+      return t;
+    };
+    const money = (v) => "₹" + Math.round(v).toLocaleString("en-IN");
+    const row = (label, t, cls) => '<tr' + (cls ? ' class="' + cls + '"' : '') + '><td>' + label + '</td><td class="num">' + t.n + '</td><td class="num">' + fmtNum(t.kg / KG_PER_MT, 2) + '</td><td class="num">' + money(t.rm) + '</td><td class="num">' + money(t.proc) + '</td><td class="num">' + money(t.lab) + '</td><td class="num strong">' + money(t.tot) + '</td><td class="num">' + (t.kg ? money(t.tot / (t.kg / KG_PER_MT)) : "—") + '</td><td class="num">' + (t.jrev ? money(t.jrev) : "—") + '</td></tr>';
+    let html = '<div class="table-wrap"><table><thead><tr><th>Factory</th><th class="num">Batches</th><th class="num">Output (MT)</th><th class="num">Raw material</th><th class="num">Processing</th><th class="num">Labour</th><th class="num">Total cost</th><th class="num">Cost / MT</th><th class="num">Job-work revenue</th></tr></thead><tbody>';
+    FACTORIES.forEach((f) => { html += row(f, sum(all.filter((e) => factoryOf(e) === f)), state.viewFactory === f ? "fs-current" : ""); });
+    html += row("<strong>Consolidated (both)</strong>", sum(all), "fs-total" + (state.viewFactory ? "" : " fs-current"));
+    host.innerHTML = html + '</tbody></table></div>';
+  }
+
   function renderReports() {
     if (!$("#view-reports")) return;
+    renderFactorySummary();
     const rows = filteredEntries();
 
     const totalBatches = rows.length;
@@ -2398,18 +2436,18 @@
   }
   function stockRowFor(date, productId, companyId) {
     const key = stockKey(companyId);
-    return state.stock.find((s) => s.date === date && s.productId === productId && stockKey(s.companyId) === key) || null;
+    return state.stock.find((s) => inFactory(s, stockScope) && s.date === date && s.productId === productId && stockKey(s.companyId) === key) || null;
   }
   // All distinct (date, companyId) buckets that exist for a product, from
   // either stock docs or tagged batch entries — used to build the ledger
   // and to find "the most recent prior date" per company.
   function stockBucketsFor(productId) {
     const map = new Map(); // key `${date} ${companyKey}` -> {date, companyId, companyName}
-    state.stock.filter((s) => s.productId === productId).forEach((s) => {
+    state.stock.filter((s) => inFactory(s, stockScope) && s.productId === productId).forEach((s) => {
       const key = s.date + " " + stockKey(s.companyId);
       if (!map.has(key)) map.set(key, { date: s.date, companyId: s.companyId || "", companyName: s.companyName || "" });
     });
-    state.entries.filter((e) => e.productId === productId).forEach((e) => {
+    state.entries.filter((e) => inFactory(e, stockScope) && e.productId === productId).forEach((e) => {
       const companyId = e.jobworkCompanyId || "";
       const key = e.date + " " + stockKey(companyId);
       if (!map.has(key)) {
@@ -2485,7 +2523,7 @@
   function producedFor(date, productId, companyId) {
     const key = stockKey(companyId);
     return state.entries
-      .filter((e) => e.date === date && e.productId === productId && stockKey(e.jobworkCompanyId) === key)
+      .filter((e) => inFactory(e, stockScope) && e.date === date && e.productId === productId && stockKey(e.jobworkCompanyId) === key)
       .reduce((s, e) => s + (e.outputQty || 0), 0);
   }
 
@@ -2551,8 +2589,10 @@
     const dispatched = parseFloat($("#st-dispatched").value) || 0;
     const opening = parseFloat($("#st-opening").value) || 0;
     if (!productId || !date) return toast("Pick a product and date.", "error");
-    const docId = date + "_" + productId + (companyId ? "_" + companyId : "");
-    const payload = { date, productId, dispatched, opening, updatedAt: new Date().toISOString() };
+    if (!state.viewFactory) return toast("Pick Orathur or Vikravandi at the top first — stock is entered for one factory at a time.", "error");
+    // Orathur keeps the original document ids so its existing stock history carries on.
+    const docId = date + "_" + productId + (companyId ? "_" + companyId : "") + (state.viewFactory === "Orathur" ? "" : "_" + state.viewFactory);
+    const payload = { date, productId, dispatched, opening, factory: state.viewFactory, updatedAt: new Date().toISOString() };
     let companyName = "";
     if (companyId) {
       const company = jobCompanyById(companyId);
@@ -2595,10 +2635,22 @@
     // either an explicit Stock doc or batch production tagged to them, so
     // logging a company-tagged batch shows up here immediately even
     // before anyone manually enters a Dispatched figure for it.
-    let buckets = [];
-    state.products.forEach((p) => {
-      stockBucketsFor(p.id).forEach((b) => buckets.push({ productId: p.id, date: b.date, companyId: b.companyId, companyName: b.companyName }));
+    // One factory picked → its own ledger. Both → each factory's ledger
+    // is worked out separately and the figures are added together.
+    const scopes = state.viewFactory ? [state.viewFactory] : FACTORIES.slice();
+    const bucketMap = new Map();
+    scopes.forEach((f) => {
+      stockScope = f;
+      state.products.forEach((p) => {
+        stockBucketsFor(p.id).forEach((b) => {
+          const k = b.date + "|" + p.id + "|" + stockKey(b.companyId);
+          if (!bucketMap.has(k)) bucketMap.set(k, { productId: p.id, date: b.date, companyId: b.companyId, companyName: b.companyName });
+        });
+      });
     });
+    stockScope = state.viewFactory;
+    let buckets = Array.from(bucketMap.values());
+    const sumScopes = (fn) => scopes.reduce((a, f) => { stockScope = f; const v = fn(); stockScope = state.viewFactory; return a + v; }, 0);
     if (isCompany) buckets = buckets.filter((b) => b.companyId === filterCompany);
 
     // Date filter dropdown — every distinct date that has a stock bucket
@@ -2625,16 +2677,16 @@
       return;
     }
     buckets.forEach((b) => {
-      const opening = openingFor(b.date, b.productId, b.companyId);
-      const producedMT = producedFor(b.date, b.productId, b.companyId) / KG_PER_MT;
-      const dispatched = dispatchedFor(b.date, b.productId, b.companyId);
-      const closing = closingFor(b.date, b.productId, b.companyId);
+      const opening = sumScopes(() => openingFor(b.date, b.productId, b.companyId));
+      const producedMT = sumScopes(() => producedFor(b.date, b.productId, b.companyId)) / KG_PER_MT;
+      const dispatched = sumScopes(() => dispatchedFor(b.date, b.productId, b.companyId));
+      const closing = sumScopes(() => closingFor(b.date, b.productId, b.companyId));
       // Only a bucket backed by an actual saved Stock doc (an opening
       // override or a manually-entered dispatch) can be deleted — a
       // bucket that exists purely because a batch was tagged here has no
       // doc of its own; delete the batch itself (Log Batch or Reports)
       // to remove that instead.
-      const existingDoc = isCompany ? null : stockRowFor(b.date, b.productId, b.companyId);
+      const existingDoc = (isCompany || !state.viewFactory) ? null : stockRowFor(b.date, b.productId, b.companyId);
       const companyCell = el("td", {}, [b.companyId ? (b.companyName || b.companyId) : "—"]);
       if (isCompany) companyCell.hidden = true;
       body.appendChild(el("tr", {}, [
@@ -3232,6 +3284,25 @@
     }
   }
 
+  function setViewFactory(f, silent) {
+    state.viewFactory = FACTORIES.indexOf(f) !== -1 ? f : "";
+    stockScope = state.viewFactory;
+    try { localStorage.setItem("bbViewFactory", state.viewFactory); } catch (e) { /* ignore */ }
+    $all(".factory-switch button").forEach((b) => b.classList.toggle("active", b.dataset.factory === state.viewFactory));
+    document.documentElement.setAttribute("data-factory", state.viewFactory || "both");
+    const note = $("#stock-factory-note");
+    if (note) note.hidden = !!state.viewFactory;
+    // New batches default to the factory being viewed.
+    if (state.viewFactory && $("#f-factory") && !state.editingEntryId) $("#f-factory").value = state.viewFactory;
+    if (!silent) {
+      renderTodayList();
+      renderReports();
+      renderStock();
+      renderJobPnL();
+      if (typeof stockAutofillOpening === "function" && $("#st-product") && $("#st-product").value) stockAutofillOpening();
+    }
+  }
+
   function renderAll() {
     rebuildMaterialGrid();
     populateProductSelects();
@@ -3271,7 +3342,11 @@
       const b = pane && document.querySelector('.settings-nav-btn[data-pane="' + pane + '"]');
       if (b) b.click();
     } catch (e) { /* ignore */ }
+    $all(".factory-switch button").forEach((b) => b.addEventListener("click", () => setViewFactory(b.dataset.factory)));
+    let savedFactory = "";
+    try { savedFactory = localStorage.getItem("bbViewFactory") || ""; } catch (e) { /* ignore */ }
     wireEvents();
+    setViewFactory(savedFactory, true);
     renderAll();
     initDb();
 
