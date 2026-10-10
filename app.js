@@ -148,69 +148,101 @@
   function monthOf(date) { return String(date || "").slice(0, 7); }
   function isClosedMonth(m) { return /^\d{4}-\d{2}$/.test(m) && m < todayStr().slice(0, 7); }
 
-  // Each cost head's figure for month m and where it came from.
-  function monthProcessingActuals(m) {
+  // Factories — every batch is tagged with the one it was made at, and
+  // each factory's month is costed from its own bills and its own output.
+  const FACTORIES = ["Orathur", "Vikravandi"];
+  // A month is costed per factory once every batch in it is tagged;
+  // until then the whole month is costed company-wide (both factories'
+  // bills over both factories' output), so nothing is left unallocated.
+  function monthGroups(rows) {
+    if (rows.length && rows.every((e) => FACTORIES.indexOf(e.factory) !== -1)) {
+      return FACTORIES.map((f) => ({ factory: f, rows: rows.filter((e) => e.factory === f) })).filter((g) => g.rows.length);
+    }
+    return [{ factory: "", rows }];
+  }
+  function manualKey(m, factory) { return factory ? m + "|" + factory : m; }
+
+  // Each cost head's figure for one factory (or "" = both) in month m and
+  // where it came from. share = this factory's part of the month's output,
+  // used to split the company-wide monthly budget for heads with no bill.
+  function monthProcessingActuals(m, factory, share) {
+    if (share == null) share = 1;
     const fromBills = {};
     state.trackerExpenses.forEach((d) => {
       if (monthOf(d.date) !== m) return;
+      if (factory && d.branch && d.branch !== factory) return;
       const k = EXPENSE_CATEGORY_FIELD[d.category];
-      if (k) fromBills[k] = (fromBills[k] || 0) + (Number(d.amount) || 0);
+      if (!k) return;
+      // A bill with no branch is shared between the factories by output.
+      const amt = (Number(d.amount) || 0) * (factory && !d.branch ? share : 1);
+      fromBills[k] = (fromBills[k] || 0) + amt;
     });
-    const manual = state.processingMonths[m] || {};
+    const manual = state.processingMonths[manualKey(m, factory)] || {};
     const fields = {};
     let total = 0;
     PROCESSING_BREAKDOWN_FIELDS.forEach((k) => {
       let amount, source;
       if (manual[k] !== undefined && manual[k] !== null && manual[k] !== "") { amount = Number(manual[k]) || 0; source = "manual"; }
       else if (fromBills[k]) { amount = fromBills[k]; source = "bills"; }
-      else { amount = Number(state.labour[k]) || 0; source = "budget"; }
+      else { amount = (Number(state.labour[k]) || 0) * share; source = "budget"; }
       fields[k] = { amount, source };
       total += amount;
     });
     return { fields, total };
   }
 
-  // ₹/MT for the batches of a closed month that don't have a fixed
-  // per-product processing cost. Products with a fixed cost keep it, and
-  // the rest of the month's actual pool is spread over the other batches'
-  // output so the whole month's actual cost is absorbed.
-  function floatingRateFromRows(m, rows) {
+  // ₹/MT for the batches of one factory-group in a closed month that don't
+  // have a fixed per-product processing cost. Products with a fixed cost
+  // keep it; the rest of the group's actual pool is spread over the other
+  // batches' output so the whole actual cost is absorbed.
+  function groupRate(m, group, monthKg) {
     if (!isClosedMonth(m)) return null;
-    let fixed = 0, floatKg = 0;
-    rows.forEach((e) => {
+    let fixed = 0, floatKg = 0, groupKg = 0;
+    group.rows.forEach((e) => {
+      groupKg += Number(e.outputQty) || 0;
       const ov = productProcessingCostOverride(e.productId);
       if (ov != null) fixed += ov; else floatKg += Number(e.outputQty) || 0;
     });
     if (floatKg <= 0) return null;
-    return Math.max(0, monthProcessingActuals(m).total - fixed) / (floatKg / KG_PER_MT);
+    const share = group.factory && monthKg > 0 ? groupKg / monthKg : 1;
+    return Math.max(0, monthProcessingActuals(m, group.factory, share).total - fixed) / (floatKg / KG_PER_MT);
   }
-  function floatingRateFor(m) {
-    return floatingRateFromRows(m, state.entries.filter((e) => monthOf(e.date) === m));
+  // Rate for a batch about to be saved (live summary on the form).
+  function floatingRateFor(m, factory) {
+    const rows = state.entries.filter((e) => monthOf(e.date) === m && e.id !== state.editingEntryId);
+    const monthKg = rows.reduce((a, e) => a + (Number(e.outputQty) || 0), 0);
+    const groups = monthGroups(rows);
+    const g = groups.find((x) => x.factory === (groups[0].factory ? factory : "")) || null;
+    return g ? groupRate(m, g, monthKg) : null;
   }
 
-  // Re-costs every batch of one closed month at that month's floating
-  // rate. Only writes batches whose processing cost actually changes.
+  // Re-costs every batch of one closed month at its group's floating rate.
+  // Only writes batches whose processing cost actually changes.
   async function recalcMonthProcessing(m) {
     if (!state.db || !isClosedMonth(m)) return 0;
     const snap = await state.db.collection("entries").where("date", ">=", m + "-01").where("date", "<=", m + "-31").get();
     const rows = snap.docs.map((d) => Object.assign({ id: d.id }, d.data()));
-    const rate = floatingRateFromRows(m, rows);
-    if (rate == null) return 0;
+    const monthKg = rows.reduce((a, e) => a + (Number(e.outputQty) || 0), 0);
     const batch = state.db.batch();
     let n = 0;
-    rows.forEach((e) => {
-      const ov = productProcessingCostOverride(e.productId);
-      const proc = ov != null ? ov : rate * ((Number(e.outputQty) || 0) / KG_PER_MT);
-      if (Math.abs(proc - (Number(e.processingCost) || 0)) < 0.5 && e.processingRateMonth === m) return;
-      const totalCost = (Number(e.rmCost) || 0) + proc + (Number(e.labourCost) || 0);
-      const fields = {
-        processingCost: proc, totalCost,
-        costPerKg: e.outputQty > 0 ? totalCost / e.outputQty : 0,
-        processingRatePerMT: ov != null ? null : rate, processingRateMonth: m,
-      };
-      if (e.jobworkCompanyId) fields.jobworkProfit = (Number(e.jobworkRevenue) || 0) - totalCost;
-      batch.update(state.db.collection("entries").doc(e.id), fields);
-      n++;
+    monthGroups(rows).forEach((g) => {
+      const rate = groupRate(m, g, monthKg);
+      if (rate == null) return;
+      g.rows.forEach((e) => {
+        const ov = productProcessingCostOverride(e.productId);
+        const proc = ov != null ? ov : rate * ((Number(e.outputQty) || 0) / KG_PER_MT);
+        const rateGroup = g.factory || "both";
+        if (Math.abs(proc - (Number(e.processingCost) || 0)) < 0.5 && e.processingRateMonth === m && e.processingRateGroup === rateGroup) return;
+        const totalCost = (Number(e.rmCost) || 0) + proc + (Number(e.labourCost) || 0);
+        const fields = {
+          processingCost: proc, totalCost,
+          costPerKg: e.outputQty > 0 ? totalCost / e.outputQty : 0,
+          processingRatePerMT: ov != null ? null : rate, processingRateMonth: m, processingRateGroup: rateGroup,
+        };
+        if (e.jobworkCompanyId) fields.jobworkProfit = (Number(e.jobworkRevenue) || 0) - totalCost;
+        batch.update(state.db.collection("entries").doc(e.id), fields);
+        n++;
+      });
     });
     if (n) await batch.commit();
     return n;
@@ -433,7 +465,7 @@
     return Number(company.labourCost) || 0;
   }
 
-  function computeCosts(materialsQty, outputQty, operators, loadmen, productId, companyId, date) {
+  function computeCosts(materialsQty, outputQty, operators, loadmen, productId, companyId, date, factory) {
     let rmCost = 0;
     state.materials.forEach((m) => {
       const q = Number(materialsQty[m.id]) || 0;
@@ -444,7 +476,7 @@
     if (override != null) {
       processingCost = override;
     } else {
-      const floating = date ? floatingRateFor(monthOf(date)) : null;
+      const floating = date ? floatingRateFor(monthOf(date), factory) : null;
       const perMT = floating != null ? floating : processingCostPerMT(state.labour);
       processingCost = perMT != null
         ? perMT * (outputQty / KG_PER_MT)
@@ -1357,7 +1389,7 @@
     const mats = getFormMaterialsQty();
     const productId = $("#f-product") ? $("#f-product").value : "";
     const companyId = $("#f-jobwork-company") ? $("#f-jobwork-company").value : "";
-    const c = computeCosts(mats, outputQty, operators, loadmen, productId, companyId, $("#f-date") ? $("#f-date").value : "");
+    const c = computeCosts(mats, outputQty, operators, loadmen, productId, companyId, $("#f-date") ? $("#f-date").value : "", $("#f-factory") ? $("#f-factory").value : "");
     $("#sum-rm").textContent = fmtINR(c.rmCost);
     $("#sum-processing").textContent = fmtINR(c.processingCost);
     // With the shared day crew on (and no product/company labour
@@ -1443,6 +1475,7 @@
 
   async function submitEntry() {
     const date = $("#f-date").value;
+    const factory = $("#f-factory") ? $("#f-factory").value : "";
     const productId = $("#f-product").value;
     // Entered in whichever unit is picked on the form; stored (and
     // costed) as a Kg-equivalent, as before.
@@ -1463,6 +1496,7 @@
     const mats = getFormMaterialsQty();
 
     if (!date) return toast("Pick a date first.", "error");
+    if (!factory) return toast("Pick the factory — Orathur or Vikravandi.", "error");
     if (!productId) return toast("Pick a product first.", "error");
     if (productId === "__other__") return toast("Finish adding the new product first.", "error");
     if (outputVal <= 0) return toast("Enter the output quantity produced.", "error");
@@ -1479,11 +1513,11 @@
       const enteredRate = rateInp ? Number(rateInp.value) || 0 : 0;
       if (enteredRate <= 0) return toast("Enter the rate agreed for this order first.", "error");
     }
-    const c = computeCosts(mats, outputQty, operators, loadmen, productId, jobworkCompanyId, date);
+    const c = computeCosts(mats, outputQty, operators, loadmen, productId, jobworkCompanyId, date, factory);
     const editingId = state.editingEntryId;
     const existing = editingId ? state.entries.find((e) => e.id === editingId) : null;
     const payload = {
-      date, productId, outputQty, materials: mats, operators, loadmen, remarks,
+      date, factory, productId, outputQty, materials: mats, operators, loadmen, remarks,
       usesDayLabourSplit: useDayLabour,
       rmCost: c.rmCost, processingCost: c.processingCost, labourCost: c.labourCost,
       totalCost: c.totalCost, costPerKg: c.costPerKg,
@@ -1559,6 +1593,7 @@
         const idx = state.entries.findIndex((e) => e.id === savedId);
         if (idx !== -1) state.entries[idx] = merged; else state.entries.unshift(merged);
       }
+      try { localStorage.setItem("bb_last_factory", factory); } catch (e) { /* ignore */ }
       if (useDayLabour) await saveDayLabour(date, dayOperators, dayLoadmen);
       await recomputeDayLabourSplit(date);
       if (isClosedMonth(monthOf(date))) await recalcMonthProcessing(monthOf(date));
@@ -1677,6 +1712,7 @@
     if (!entry) return;
     opts = opts || {};
     $("#f-product").value = entry.productId || "";
+    if ($("#f-factory") && entry.factory) $("#f-factory").value = entry.factory;
     // entry.outputQty is stored in Kg; refill the form in MT (and reset
     // the unit picker to MT so the displayed number matches the label).
     $("#f-output").value = entry.outputQty ? entry.outputQty / KG_PER_MT : "";
@@ -2720,26 +2756,34 @@
     const months = Array.from(new Set(state.entries.map((e) => monthOf(e.date)))).filter((m) => /^\d{4}-\d{2}$/.test(m)).sort().reverse();
     if (!months.length) { wrap.innerHTML = '<p class="hint">No batches yet.</p>'; return; }
     const tag = { bills: "", manual: " ✎", budget: " *" };
-    let html = '<div class="table-wrap"><table><thead><tr><th>Month</th><th class="num">Output (MT)</th>' +
+    const money = (v) => fmtINR(v).replace(/\.00$/, "");
+    let html = '<div class="table-wrap"><table><thead><tr><th>Month</th><th>Factory</th><th class="num">Output (MT)</th>' +
       PROCESSING_BREAKDOWN_FIELDS.map((k) => '<th class="num">' + PROCESSING_FIELD_LABELS[k] + '</th>').join("") +
       '<th class="num">Total</th><th class="num">Rate / MT</th></tr></thead><tbody>';
     const budgetRate = processingCostPerMT(state.labour);
     months.forEach((m) => {
       const rows = state.entries.filter((e) => monthOf(e.date) === m);
-      const mt = rows.reduce((a, e) => a + (Number(e.outputQty) || 0), 0) / KG_PER_MT;
+      const monthKg = rows.reduce((a, e) => a + (Number(e.outputQty) || 0), 0);
       const closed = isClosedMonth(m);
-      const a = monthProcessingActuals(m);
-      const rate = closed ? floatingRateFromRows(m, rows) : null;
       const label = new Date(m + "-01T00:00:00").toLocaleDateString("en-IN", { month: "short", year: "numeric" });
-      html += '<tr><td>' + label + (closed ? "" : ' <span class="hint">(running — budget rate)</span>') + '</td><td class="num">' + fmtNum(mt, 1) + '</td>' +
-        PROCESSING_BREAKDOWN_FIELDS.map((k) => {
-          const f = closed ? a.fields[k] : { amount: Number(state.labour[k]) || 0, source: "budget" };
-          return '<td class="num"' + (f.source === "budget" ? ' style="opacity:.6"' : '') + '>' + fmtINR(f.amount).replace(/\.00$/, "") + tag[f.source] + '</td>';
-        }).join("") +
-        '<td class="num"><strong>' + fmtINR(closed ? a.total : monthlyProcessingCostTotal(state.labour)).replace(/\.00$/, "") + '</strong></td>' +
-        '<td class="num"><strong>' + (closed ? (rate != null ? fmtINR(rate) : "—") : (budgetRate != null ? fmtINR(budgetRate) : "—")) + '</strong></td></tr>';
+      const groups = monthGroups(rows);
+      const untagged = rows.filter((e) => FACTORIES.indexOf(e.factory) === -1).length;
+      groups.forEach((g, gi) => {
+        const kg = g.rows.reduce((a, e) => a + (Number(e.outputQty) || 0), 0);
+        const share = g.factory && monthKg > 0 ? kg / monthKg : 1;
+        const a = monthProcessingActuals(m, g.factory, share);
+        const rate = closed ? groupRate(m, g, monthKg) : null;
+        const fname = g.factory || ('Both' + (untagged ? ' <span class="hint">(' + untagged + ' untagged)</span>' : ''));
+        html += '<tr><td>' + (gi === 0 ? label + (closed ? "" : ' <span class="hint">(running)</span>') : "") + '</td><td>' + fname + '</td><td class="num">' + fmtNum(kg / KG_PER_MT, 1) + '</td>' +
+          PROCESSING_BREAKDOWN_FIELDS.map((k) => {
+            const f = a.fields[k];
+            return '<td class="num"' + (f.source === "budget" ? ' style="opacity:.6"' : '') + '>' + money(f.amount) + tag[f.source] + '</td>';
+          }).join("") +
+          '<td class="num"><strong>' + money(a.total) + '</strong></td>' +
+          '<td class="num"><strong>' + (closed ? (rate != null ? fmtINR(rate) : "—") : (budgetRate != null ? fmtINR(budgetRate) + ' <span class="hint">budget</span>' : "—")) + '</strong></td></tr>';
+      });
     });
-    html += '</tbody></table></div><p class="hint" style="margin-top:6px;">No mark = bills from the EMR Tracker Expenses tab &middot; ✎ = typed in below &middot; * (faded) = monthly budget, used because no bill is logged for that head yet.</p>';
+    html += '</tbody></table></div><p class="hint" style="margin-top:6px;">No mark = bills from the EMR Tracker Expenses tab for that factory &middot; ✎ = typed in below &middot; * (faded) = monthly budget, split by each factory&rsquo;s share of output, used because no bill is logged for that head yet. A month is costed per factory once every batch in it is tagged with a factory.</p>';
     wrap.innerHTML = html;
     const ms = $("#float-month");
     if (ms) {
@@ -2753,15 +2797,17 @@
 
   async function saveFloatingManual() {
     const m = $("#float-month").value, k = $("#float-head").value, raw = $("#float-amount").value.trim();
+    const factory = $("#float-factory") ? $("#float-factory").value : "";
     if (!m || !k) return;
+    const key = manualKey(m, factory);
     const months = JSON.parse(JSON.stringify(state.processingMonths || {}));
-    months[m] = months[m] || {};
-    if (raw === "") delete months[m][k]; else months[m][k] = parseFloat(raw) || 0;
+    months[key] = months[key] || {};
+    if (raw === "") delete months[key][k]; else months[key][k] = parseFloat(raw) || 0;
     try {
       if (state.db) await state.db.doc("settings/processingMonths").set({ months, updatedAt: new Date().toISOString() });
       state.processingMonths = months;
       $("#float-amount").value = "";
-      toast(raw === "" ? "Cleared — that month now uses bills or budget for " + PROCESSING_FIELD_LABELS[k] + "." : PROCESSING_FIELD_LABELS[k] + " for that month saved.", "success");
+      toast(raw === "" ? "Cleared — that month now uses bills or budget for " + PROCESSING_FIELD_LABELS[k] + "." : PROCESSING_FIELD_LABELS[k] + " saved for " + (factory || "both factories") + ".", "success");
       renderFloatingRates();
       await recalcMonthProcessing(m);
     } catch (e) {
@@ -2930,6 +2976,12 @@
 
     $("#f-date").value = todayStr();
     $("#f-date").addEventListener("change", renderTodayList);
+    if ($("#f-factory")) {
+      let lastFactory = "";
+      try { lastFactory = localStorage.getItem("bb_last_factory") || ""; } catch (e) { /* ignore */ }
+      if (FACTORIES.indexOf(lastFactory) !== -1) $("#f-factory").value = lastFactory;
+      $("#f-factory").addEventListener("change", updateLiveSummary);
+    }
     $("#f-date").addEventListener("change", () => {
       if ($("#f-use-daylabour") && $("#f-use-daylabour").checked) toggleDayLabourUI();
     });

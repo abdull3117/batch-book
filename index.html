@@ -80,6 +80,10 @@
             <label for="f-date">Date</label>
             <input type="date" id="f-date" />
           </div>
+          <div class="field">
+            <label for="f-factory">Factory</label>
+            <select id="f-factory"><option value="">Pick factory…</option><option>Orathur</option><option>Vikravandi</option></select>
+          </div>
           <div class="field" style="grid-column: span 2;">
             <label for="f-product">Product</label>
             <select id="f-product" class="product-select"></select>
@@ -624,10 +628,11 @@
 
         <div class="card" style="margin-top:16px;">
           <div class="card-title">Monthly actual processing cost (floating rate)</div>
-          <p class="hint">Each finished month is costed at <strong>that month&rsquo;s actual processing expenses &divide; that month&rsquo;s actual output</strong>. Actual bills come straight from the EMR Tracker&rsquo;s Expenses tab: EB Bills, Fuel &amp; Transport, Maintenance &amp; Repairs, Salaries &amp; Wages and Miscellaneous (as department expenses). Every batch in the month is re-costed automatically when bills or batches change. Products with their own fixed processing cost keep it.</p>
+          <p class="hint">Each finished month is costed <strong>per factory</strong>: that factory&rsquo;s actual processing expenses for the month &divide; that factory&rsquo;s actual output. Actual bills come straight from the EMR Tracker&rsquo;s Expenses tab: EB Bills, Fuel &amp; Transport, Maintenance &amp; Repairs, Salaries &amp; Wages and Miscellaneous (as department expenses). Every batch in the month is re-costed automatically when bills or batches change. Products with their own fixed processing cost keep it.</p>
           <div id="float-rates-wrap"></div>
-          <div class="field-row" style="grid-template-columns:1fr 1fr 1fr auto;align-items:end;margin-top:12px;">
+          <div class="field-row" style="grid-template-columns:1fr 1fr 1fr 1fr auto;align-items:end;margin-top:12px;">
             <div class="field"><label for="float-month">Month</label><select id="float-month"></select></div>
+            <div class="field"><label for="float-factory">Factory</label><select id="float-factory"><option value="">Both (untagged month)</option><option>Orathur</option><option>Vikravandi</option></select></div>
             <div class="field"><label for="float-head">Cost head</label><select id="float-head"></select></div>
             <div class="field"><label for="float-amount">Actual amount (&#8377;)</label><input type="number" min="0" step="any" id="float-amount" placeholder="blank = clear" /></div>
             <div class="field"><button class="btn btn-primary" id="btn-float-save">Save</button></div>
@@ -722,6 +727,6 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
-<script src="app.js?v=31"></script>
+<script src="app.js?v=32"></script>
 </body>
 </html>
