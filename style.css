@@ -467,3 +467,41 @@ html[data-view="compact"] .tile .tv { font-size: 1.3rem; margin-top: 3px; }
 html[data-view="compact"] .filter-row { margin-bottom: 12px; }
 html[data-view="compact"] tbody td { padding: 6px 8px; }
 html[data-view="compact"] thead th { padding: 0 8px 6px; }
+
+/* ---------- Settings: sub-tabs + calmer layout ---------- */
+.settings-nav { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 16px; }
+.settings-nav-btn {
+  border: 2px solid var(--border-strong); background: var(--surface); color: var(--text-muted);
+  font-family: var(--font-display); font-weight: 700; font-size: .86rem;
+  padding: 8px 16px; border-radius: 999px; cursor: pointer; transition: background .12s, color .12s, border-color .12s;
+}
+.settings-nav-btn:hover { color: var(--text); border-color: var(--purple); }
+.settings-nav-btn.active { background: var(--purple-soft); border-color: var(--purple); color: var(--purple); }
+.settings-pane { display: none; }
+.settings-pane.active { display: block; animation: fadein .2s ease; }
+.settings-pane > .card + .card, .settings-pane > .settings-two + .card, .settings-pane > .card + .settings-two { margin-top: 16px; }
+.settings-two { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; }
+.settings-two > * { min-width: 0; }
+.settings-two > .card + .card { margin-top: 0; }
+@media (max-width: 900px) { .settings-two { grid-template-columns: 1fr; } }
+#view-settings .card { min-width: 0; }
+#view-settings .hint { font-size: .82rem; color: var(--text-muted); line-height: 1.5; }
+/* Buttons sized to their label instead of full-width bars */
+#view-settings .btn { width: auto; min-width: 150px; }
+#view-settings .btn-small { min-width: 0; }
+#view-settings .field-row { grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)) !important; }
+#view-settings .field-row .field[style*="grid-column"] { grid-column: auto !important; }
+#float-rates-wrap table { font-size: .8rem; }
+#float-rates-wrap td, #float-rates-wrap th { padding-left: 6px; padding-right: 6px; }
+html[data-view="compact"] .settings-nav { margin-bottom: 12px; }
+html[data-view="compact"] .settings-nav-btn { padding: 6px 13px; }
+html[data-view="compact"] .settings-two { gap: 12px; }
+html[data-view="compact"] .settings-pane > .card + .card, html[data-view="compact"] .settings-pane > .settings-two + .card, html[data-view="compact"] .settings-pane > .card + .settings-two { margin-top: 12px; }
+
+#view-settings .btn-row .btn, #view-settings .btn-row > .btn-primary { flex: 0 0 auto; }
+#view-settings .btn-row { justify-content: flex-start; }
+.settings-two > .card + .card, html[data-view="compact"] .settings-two > .card + .card { margin-top: 0; }
+.settings-two > .card { margin-top: 0 !important; }
+#view-settings .btn { margin-top: 12px; padding: 8px 18px; font-size: .84rem; }
+#view-settings .btn-row .btn, #view-settings .btn-row .btn-small { margin-top: 0; }
+#view-settings .add-item-row .btn, #view-settings td .btn { margin-top: 0; }

@@ -12,7 +12,7 @@
 <!-- Cache-busting: GitHub Pages caches these for 10 minutes (Cache-Control: max-age=600).
      Bump the ?v= number on app.js, style.css and firebase-config.js below every time
      any of those files are redeployed, so users don't keep running a stale cached copy. -->
-<link rel="stylesheet" href="style.css?v=13" />
+<link rel="stylesheet" href="style.css?v=14" />
 </head>
 <body>
 
@@ -474,11 +474,19 @@
   <section class="view" id="view-settings">
     <div class="view-header">
       <h2>⚙️ Settings</h2>
-      <p>Raw material rates, labour wages and the processing cost used to calculate every batch.</p>
+      <p>Rates, wages and costs used to calculate every batch.</p>
     </div>
 
-    <div class="settings-grid">
-      <div class="card">
+    <div class="settings-nav" role="tablist">
+      <button type="button" class="settings-nav-btn active" data-pane="rates">💰 Rates &amp; wages</button>
+      <button type="button" class="settings-nav-btn" data-pane="products">📦 Products &amp; job work</button>
+      <button type="button" class="settings-nav-btn" data-pane="processing">⚡ Processing cost</button>
+      <button type="button" class="settings-nav-btn" data-pane="access">🔒 Passwords &amp; logins</button>
+    </div>
+
+    <div class="settings-pane active" id="settings-pane-rates">
+      <div class="settings-two">
+<div class="card">
         <div class="card-title">Raw material rates (&#8377; per unit)</div>
         <div class="table-wrap max-scroll">
           <table>
@@ -503,11 +511,9 @@
           <button class="btn btn-primary" id="btn-save-rates">Save rates</button>
         </div>
       </div>
-
-      <div>
-        <div class="card">
-          <div class="card-title">Labour &amp; processing cost</div>
-          <div class="field-row" style="grid-template-columns:1fr;">
+<div class="card">
+          <div class="card-title">Daily wages</div>
+          <div class="field-row" style="grid-template-columns:1fr 1fr 1fr;">
             <div class="field">
               <label for="s-operator-rate">Operator daily wage (&#8377;)</label>
               <input type="number" min="0" step="any" id="s-operator-rate" />
@@ -521,20 +527,45 @@
               <input type="number" min="0" step="any" id="s-processing-cost" />
             </div>
           </div>
-          <p class="hint" style="margin-top:4px;">Used for any product that doesn&rsquo;t have its own fallback cost below. Auto-synced to the breakdown&rsquo;s &#8377;/MT rate further down once that&rsquo;s set up (only kicks in as a flat fallback when no budgeted monthly output is entered).</p>
+          <p class="hint" style="margin-top:4px;">Fallback processing cost is only used when no monthly budget is set up under <strong>Processing cost</strong>.</p>
           <button class="btn btn-primary" id="btn-save-labour">Save settings</button>
         </div>
+      </div>
+    </div>
 
-        <div class="card" style="margin-top:16px;">
-          <div class="card-title">Fallback processing cost by product (&#8377;/batch)</div>
-          <p class="hint">Different products don&rsquo;t cost the same to process even on the same machinery. Pick a product to set its own fallback cost &mdash; it overrides the default above (and the breakdown&rsquo;s &#8377;/MT rate) for that product&rsquo;s batches. Leave a product without one and it keeps using the default.</p>
+    <div class="settings-pane" id="settings-pane-products">
+<div class="card">
+          <div class="card-title">Products</div>
+          <div class="table-wrap max-scroll">
+            <table>
+              <thead><tr><th>Product</th><th>Unit</th><th>Fixed processing cost</th><th>Labour cost</th></tr></thead>
+              <tbody id="settings-products-body"></tbody>
+            </table>
+          </div>
+          <p class="hint" style="margin-top:8px;">Change a product's unit anytime &mdash; it saves right away.</p>
+          <div class="add-item-row" id="add-product-row" hidden>
+            <input type="text" id="new-prod-name" placeholder="Product name" />
+            <select id="new-prod-unit" class="unit-select">
+              <option value="Kg">Kg</option>
+              <option value="Litre">Litre</option>
+              <option value="Metric Tonne">Metric Tonne</option>
+            </select>
+            <button class="btn btn-primary btn-small" id="btn-confirm-add-product">Add</button>
+            <button class="btn btn-secondary btn-small" id="btn-cancel-add-product">Cancel</button>
+          </div>
+          <button class="btn btn-secondary btn-small" id="btn-show-add-product" style="margin-top:12px;">+ Add product</button>
+        </div>
+      <div class="settings-two">
+<div class="card">
+          <div class="card-title">Fixed processing cost for a product (&#8377;/batch)</div>
+          <p class="hint">A fixed processing cost per batch for one product. It replaces the monthly rate for that product only.</p>
           <div class="field-row" style="grid-template-columns:1fr 1fr;">
             <div class="field">
               <label for="s-fallback-product">Product</label>
               <select id="s-fallback-product"></select>
             </div>
             <div class="field">
-              <label for="s-fallback-product-cost">Fallback processing cost for this product (&#8377;)</label>
+              <label for="s-fallback-product-cost">Fixed cost for this product (&#8377;/batch)</label>
               <input type="number" min="0" step="any" id="s-fallback-product-cost" placeholder="Using the default above" />
             </div>
           </div>
@@ -543,10 +574,9 @@
             <button class="btn btn-secondary btn-small" id="btn-clear-fallback-product">Clear override</button>
           </div>
         </div>
-
-        <div class="card" style="margin-top:16px;">
+<div class="card">
           <div class="card-title">Labour cost by product (&#8377;/batch)</div>
-          <p class="hint">Some products take more labour to handle than others. Pick a product to set its own flat labour cost &mdash; it replaces the operator/loadman-count calculation above for that product&rsquo;s batches. Leave a product without one and it keeps using the daily-wage calculation.</p>
+          <p class="hint">A flat labour cost per batch for one product, instead of operator / loadman wages.</p>
           <div class="field-row" style="grid-template-columns:1fr 1fr;">
             <div class="field">
               <label for="s-labour-product">Product</label>
@@ -562,10 +592,10 @@
             <button class="btn btn-secondary btn-small" id="btn-clear-labour-product">Clear override</button>
           </div>
         </div>
-
-        <div class="card" style="margin-top:16px;">
+      </div>
+<div class="card">
           <div class="card-title">Labour cost by company (&#8377;/MT)</div>
-          <p class="hint">A job work client&rsquo;s contract can mean different labour handling too. Pick a company to set its own labour rate per metric tonne of output &mdash; it&rsquo;s multiplied by each batch&rsquo;s output and overrides both the daily-wage calculation and any product override above for batches tagged to that company. Leave a company without one and it keeps using whichever of those applies.</p>
+          <p class="hint">A labour rate per MT for a job-work company. It applies to every batch made for that company.</p>
           <div class="field-row" style="grid-template-columns:1fr 1fr;">
             <div class="field">
               <label for="s-labour-company">Company</label>
@@ -581,10 +611,26 @@
             <button class="btn btn-secondary btn-small" id="btn-clear-labour-company">Clear override</button>
           </div>
         </div>
+    </div>
 
-        <div class="card" style="margin-top:16px;">
-          <div class="card-title">Processing cost breakdown (&#8377; per month)</div>
-          <p class="hint">Your monthly <strong>budget</strong>. Divided by the budgeted monthly output, it gives the &#8377;/MT rate used for the <strong>current month</strong> while it&rsquo;s still running. Once a month is over, its batches switch to that month&rsquo;s actual rate (see the next card). Any cost head with no actual bill logged for a past month still uses the budget figure here.</p>
+    <div class="settings-pane" id="settings-pane-processing">
+<div class="card">
+          <div class="card-title">Actual cost per month (floating rate)</div>
+          <p class="hint">Each finished month is costed <strong>per factory</strong>: that factory&rsquo;s actual bills &divide; its actual output. Bills come from the EMR Tracker&rsquo;s Expenses tab, and batches re-cost automatically.</p>
+          <div id="float-rates-wrap"></div>
+          <div class="field-row" style="grid-template-columns:1fr 1fr 1fr 1fr auto;align-items:end;margin-top:12px;">
+            <div class="field"><label for="float-month">Month</label><select id="float-month"></select></div>
+            <div class="field"><label for="float-factory">Factory</label><select id="float-factory"><option value="">Both (untagged month)</option><option>Orathur</option><option>Vikravandi</option></select></div>
+            <div class="field"><label for="float-head">Cost head</label><select id="float-head"></select></div>
+            <div class="field"><label for="float-amount">Actual amount (&#8377;)</label><input type="number" min="0" step="any" id="float-amount" placeholder="blank = clear" /></div>
+            <div class="field"><button class="btn btn-primary" id="btn-float-save">Save</button></div>
+          </div>
+          <p class="hint">Use this for a head that isn&rsquo;t logged in the tracker, e.g. fuel or stitching. A typed figure overrides the tracker bills for that month and head.</p>
+          <button class="btn btn-secondary" id="btn-float-recalc" style="margin-top:4px;">Recalculate batch costs now</button>
+        </div>
+<div class="card">
+          <div class="card-title">Monthly budget (&#8377; per month)</div>
+          <p class="hint">Used for the <strong>current month</strong> while it is running, and for any cost head with no actual bill in a past month.</p>
           <div class="field-row" style="grid-template-columns:1fr 1fr;">
             <div class="field">
               <label for="s-eb-cost">EB (electricity) cost</label>
@@ -627,25 +673,12 @@
           <div class="summary-row"><span class="k">Rate applied per batch</span><span class="v" id="proc-per-mt-rate">Not set up &mdash; using fallback</span></div>
           <button class="btn btn-primary" id="btn-save-processing-breakdown" style="margin-top:8px;">Save breakdown</button>
         </div>
+    </div>
 
-        <div class="card" style="margin-top:16px;">
-          <div class="card-title">Monthly actual processing cost (floating rate)</div>
-          <p class="hint">Each finished month is costed <strong>per factory</strong>: that factory&rsquo;s actual processing expenses for the month &divide; that factory&rsquo;s actual output. Actual bills come straight from the EMR Tracker&rsquo;s Expenses tab: EB Bills, Fuel &amp; Transport, Maintenance &amp; Repairs, Salaries &amp; Wages and Miscellaneous (as department expenses). Every batch in the month is re-costed automatically when bills or batches change. Products with their own fixed processing cost keep it.</p>
-          <div id="float-rates-wrap"></div>
-          <div class="field-row" style="grid-template-columns:1fr 1fr 1fr 1fr auto;align-items:end;margin-top:12px;">
-            <div class="field"><label for="float-month">Month</label><select id="float-month"></select></div>
-            <div class="field"><label for="float-factory">Factory</label><select id="float-factory"><option value="">Both (untagged month)</option><option>Orathur</option><option>Vikravandi</option></select></div>
-            <div class="field"><label for="float-head">Cost head</label><select id="float-head"></select></div>
-            <div class="field"><label for="float-amount">Actual amount (&#8377;)</label><input type="number" min="0" step="any" id="float-amount" placeholder="blank = clear" /></div>
-            <div class="field"><button class="btn btn-primary" id="btn-float-save">Save</button></div>
-          </div>
-          <p class="hint">Use this for a head that isn&rsquo;t logged in the tracker, e.g. fuel or stitching. A typed figure overrides the tracker bills for that month and head.</p>
-          <button class="btn btn-secondary" id="btn-float-recalc" style="margin-top:4px;">Recalculate batch costs now</button>
-        </div>
-
-        <div class="card" style="margin-top:16px;">
-          <div class="card-title">Access control</div>
-          <p class="hint">Set the shared passwords used to unlock the app. Team members only see Log Batch &amp; Stock &mdash; no costs, rates or Reports. Leave a field blank to keep that password unchanged.</p>
+    <div class="settings-pane" id="settings-pane-access">
+<div class="card">
+          <div class="card-title">App passwords</div>
+          <p class="hint">Team members only see Log Batch &amp; Stock. Leave a box blank to keep that password.</p>
           <div class="field-row" style="grid-template-columns:1fr 1fr;">
             <div class="field">
               <label for="s-admin-password">New admin password</label>
@@ -676,29 +709,6 @@
           </div>
           <ul id="company-access-list" class="hint" style="margin:12px 0 0; padding-left:18px;"></ul>
         </div>
-
-        <div class="card" style="margin-top:16px;">
-          <div class="card-title">Products</div>
-          <div class="table-wrap max-scroll">
-            <table>
-              <thead><tr><th>Product</th><th>Unit</th><th>Fallback processing cost</th><th>Labour cost</th></tr></thead>
-              <tbody id="settings-products-body"></tbody>
-            </table>
-          </div>
-          <p class="hint" style="margin-top:8px;">Change a product's unit anytime &mdash; it saves right away.</p>
-          <div class="add-item-row" id="add-product-row" hidden>
-            <input type="text" id="new-prod-name" placeholder="Product name" />
-            <select id="new-prod-unit" class="unit-select">
-              <option value="Kg">Kg</option>
-              <option value="Litre">Litre</option>
-              <option value="Metric Tonne">Metric Tonne</option>
-            </select>
-            <button class="btn btn-primary btn-small" id="btn-confirm-add-product">Add</button>
-            <button class="btn btn-secondary btn-small" id="btn-cancel-add-product">Cancel</button>
-          </div>
-          <button class="btn btn-secondary btn-small" id="btn-show-add-product" style="margin-top:12px;">+ Add product</button>
-        </div>
-      </div>
     </div>
   </section>
 
@@ -729,6 +739,6 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
-<script src="app.js?v=33"></script>
+<script src="app.js?v=34"></script>
 </body>
 </html>

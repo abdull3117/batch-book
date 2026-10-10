@@ -2756,10 +2756,10 @@
     const months = Array.from(new Set(state.entries.map((e) => monthOf(e.date)))).filter((m) => /^\d{4}-\d{2}$/.test(m)).sort().reverse();
     if (!months.length) { wrap.innerHTML = '<p class="hint">No batches yet.</p>'; return; }
     const tag = { bills: "", manual: " ✎", budget: " *" };
-    const money = (v) => fmtINR(v).replace(/\.00$/, "");
-    let html = '<div class="table-wrap"><table><thead><tr><th>Month</th><th>Factory</th><th class="num">Output (MT)</th>' +
+    const money = (v) => "₹" + Math.round(Number(v) || 0).toLocaleString("en-IN");
+    let html = '<div class="table-wrap"><table><thead><tr><th>Month</th><th>Factory</th><th class="num">Output (MT)</th><th class="num">Rate / MT</th><th class="num">Total</th>' +
       PROCESSING_BREAKDOWN_FIELDS.map((k) => '<th class="num">' + PROCESSING_FIELD_LABELS[k] + '</th>').join("") +
-      '<th class="num">Total</th><th class="num">Rate / MT</th></tr></thead><tbody>';
+      '</tr></thead><tbody>';
     const budgetRate = processingCostPerMT(state.labour);
     months.forEach((m) => {
       const rows = state.entries.filter((e) => monthOf(e.date) === m);
@@ -2775,12 +2775,12 @@
         const rate = closed ? groupRate(m, g, monthKg) : null;
         const fname = g.factory || ('Both' + (untagged ? ' <span class="hint">(' + untagged + ' untagged)</span>' : ''));
         html += '<tr><td>' + (gi === 0 ? label + (closed ? "" : ' <span class="hint">(running)</span>') : "") + '</td><td>' + fname + '</td><td class="num">' + fmtNum(kg / KG_PER_MT, 1) + '</td>' +
+          '<td class="num"><strong>' + (closed ? (rate != null ? money(rate) : "—") : (budgetRate != null ? money(budgetRate) + ' <span class="hint">budget</span>' : "—")) + '</strong></td>' +
+          '<td class="num"><strong>' + money(a.total) + '</strong></td>' +
           PROCESSING_BREAKDOWN_FIELDS.map((k) => {
             const f = a.fields[k];
             return '<td class="num"' + (f.source === "budget" ? ' style="opacity:.6"' : '') + '>' + money(f.amount) + tag[f.source] + '</td>';
-          }).join("") +
-          '<td class="num"><strong>' + money(a.total) + '</strong></td>' +
-          '<td class="num"><strong>' + (closed ? (rate != null ? fmtINR(rate) : "—") : (budgetRate != null ? fmtINR(budgetRate) + ' <span class="hint">budget</span>' : "—")) + '</strong></td></tr>';
+          }).join("") + '</tr>';
       });
     });
     html += '</tbody></table></div><p class="hint" style="margin-top:6px;">No mark = bills from the EMR Tracker Expenses tab for that factory &middot; ✎ = typed in below &middot; * (faded) = monthly budget, split by each factory&rsquo;s share of output, used because no bill is logged for that head yet. A month is costed per factory once every batch in it is tagged with a factory.</p>';
@@ -3259,6 +3259,18 @@
         label();
       });
     }
+    $all(".settings-nav-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        $all(".settings-nav-btn").forEach((b) => b.classList.toggle("active", b === btn));
+        $all(".settings-pane").forEach((p) => p.classList.toggle("active", p.id === "settings-pane-" + btn.dataset.pane));
+        try { localStorage.setItem("bbSettingsPane", btn.dataset.pane); } catch (e) { /* ignore */ }
+      });
+    });
+    try {
+      const pane = localStorage.getItem("bbSettingsPane");
+      const b = pane && document.querySelector('.settings-nav-btn[data-pane="' + pane + '"]');
+      if (b) b.click();
+    } catch (e) { /* ignore */ }
     wireEvents();
     renderAll();
     initDb();
