@@ -2510,7 +2510,20 @@
     const row = stockRowFor(date, productId, companyId);
     return row ? Number(row.opening) || 0 : 0;
   }
+  // A physical stock count saved for the day replaces the worked-out
+  // closing; the next day carries on from the counted figure.
+  function countFor(date, productId, companyId) {
+    const row = stockRowFor(date, productId, companyId);
+    return row && row.physicalClosing != null && row.physicalClosing !== "" ? Number(row.physicalClosing) : null;
+  }
+  function bookClosingFor(date, productId, companyId) {
+    const opening = openingFor(date, productId, companyId);
+    const producedMT = producedFor(date, productId, companyId) / KG_PER_MT;
+    return opening + producedMT + transferNetFor(date, productId, companyId) - dispatchedFor(date, productId, companyId);
+  }
   function closingFor(date, productId, companyId) {
+    const counted = countFor(date, productId, companyId);
+    if (counted != null) return counted;
     const opening = openingFor(date, productId, companyId);
     const producedMT = producedFor(date, productId, companyId) / KG_PER_MT;
     return opening + producedMT + transferNetFor(date, productId, companyId) - dispatchedFor(date, productId, companyId);
@@ -2579,6 +2592,7 @@
       }
     }
     $("#st-dispatched").value = existing ? existing.dispatched : "";
+    if ($("#st-count")) $("#st-count").value = existing && existing.physicalClosing != null ? existing.physicalClosing : "";
     updateStockClosingPreview();
   }
 
@@ -2606,6 +2620,11 @@
     preview.hidden = false;
     preview.textContent = "Closing stock after this: " + fmtNum(closing, 2) + " MT" +
       ((producedMT || xfer) ? " (" + fmtNum(opening, 2) + " opening + " + fmtNum(producedMT, 2) + " produced" + (xfer ? (xfer > 0 ? " + " : " − ") + fmtNum(Math.abs(xfer), 2) + " transferred " + (xfer > 0 ? "in" : "out") : "") + " − " + fmtNum(dispatched, 2) + " dispatched)" : "");
+    const countRaw = $("#st-count") ? $("#st-count").value.trim() : "";
+    if (countRaw !== "") {
+      const c = parseFloat(countRaw) || 0, adj = c - closing;
+      preview.textContent = "Closing stock after this: " + fmtNum(c, 2) + " MT (counted). Worked out " + fmtNum(closing, 2) + " MT, so adjustment " + (adj >= 0 ? "+" : "−") + fmtNum(Math.abs(adj), 2) + " MT.";
+    }
   }
 
   async function submitStock() {
@@ -2618,7 +2637,8 @@
     const factory = stockFormFactory();
     // Orathur keeps the original document ids so its existing stock history carries on.
     const docId = date + "_" + productId + (companyId ? "_" + companyId : "") + (factory === "Orathur" ? "" : "_" + factory);
-    const payload = { date, productId, dispatched, opening, factory, updatedAt: new Date().toISOString() };
+    const countRaw = $("#st-count") ? $("#st-count").value.trim() : "";
+    const payload = { date, productId, dispatched, opening, factory, physicalClosing: countRaw === "" ? null : (parseFloat(countRaw) || 0), updatedAt: new Date().toISOString() };
     let companyName = "";
     if (companyId) {
       const company = jobCompanyById(companyId);
@@ -2709,6 +2729,8 @@
       const dispatched = sumScopes(() => dispatchedFor(b.date, b.productId, b.companyId));
       const transfers = sumScopes(() => transferNetFor(b.date, b.productId, b.companyId));
       const closing = sumScopes(() => closingFor(b.date, b.productId, b.companyId));
+      const adj = sumScopes(() => { const c = countFor(b.date, b.productId, b.companyId); return c == null ? 0 : c - bookClosingFor(b.date, b.productId, b.companyId); });
+      const counted = scopes.some((f) => { stockScope = f; const c = countFor(b.date, b.productId, b.companyId); stockScope = state.viewFactory; return c != null; });
       // Only a bucket backed by an actual saved Stock doc (an opening
       // override or a manually-entered dispatch) can be deleted — a
       // bucket that exists purely because a batch was tagged here has no
@@ -2725,7 +2747,7 @@
         el("td", { class: "num" }, [fmtNum(producedMT, 2)]),
         el("td", { class: "num" }, [transfers ? (transfers > 0 ? "+" : "−") + fmtNum(Math.abs(transfers), 2) : "—"]),
         el("td", { class: "num" }, [fmtNum(dispatched, 2)]),
-        el("td", { class: "num strong" }, [fmtNum(closing, 2)]),
+        el("td", { class: "num strong" }, [fmtNum(closing, 2), counted ? el("div", { class: "hint", title: "Physical stock count. Adjustment = counted minus worked-out stock (dispatches or losses not entered)." }, ["counted" + (Math.abs(adj) >= 0.005 ? " · adj " + (adj > 0 ? "+" : "−") + fmtNum(Math.abs(adj), 2) : "")]) : null]),
         el("td", { class: "num" }, [
           existingDoc
             ? el("button", {
@@ -3433,6 +3455,7 @@
     $all(".factory-switch button").forEach((b) => b.addEventListener("click", () => setViewFactory(b.dataset.factory)));
     $all(".factory-view-select").forEach((sel) => sel.addEventListener("change", () => setViewFactory(sel.value)));
     if ($("#st-factory")) $("#st-factory").addEventListener("change", stockAutofillOpening);
+    if ($("#st-count")) $("#st-count").addEventListener("input", updateStockClosingPreview);
     if ($("#xf-item")) $("#xf-item").addEventListener("change", toggleXferOther);
     if ($("#btn-xfer-save")) $("#btn-xfer-save").addEventListener("click", submitTransfer);
     if ($("#xf-date")) $("#xf-date").value = todayStr();

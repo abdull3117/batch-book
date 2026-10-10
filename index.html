@@ -352,6 +352,10 @@
           <p class="hint" style="margin-top:6px;">Leave as &ldquo;Regular stock/dispatch&rdquo; for ordinary sales. Pick a job work company to track that company&rsquo;s own opening, production and dispatch separately &mdash; batches logged for that company fill in Produced automatically; enter Dispatched here to carry into that company&rsquo;s next opening balance.</p>
         </div>
       </div>
+      <div class="field-row cols-5" style="margin-top:-6px;">
+        <div class="field"><label for="st-count">Physical stock count (MT)</label><input type="number" min="0" step="any" id="st-count" placeholder="optional" /></div>
+        <div class="field" style="grid-column: span 4;"><p class="hint" style="margin-top:22px;">Enter the stock actually counted at the end of the day. It becomes the closing stock, and any difference shows as an adjustment in the ledger.</p></div>
+      </div>
       <div class="rate-readout" id="st-closing-preview" hidden style="margin-bottom:10px;">Closing stock after this: &#8212;</div>
       <button class="btn btn-primary" id="btn-stock-save" style="max-width:240px;">Save stock entry</button>
     </div>
@@ -790,6 +794,6 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
-<script src="app.js?v=37"></script>
+<script src="app.js?v=38"></script>
 </body>
 </html>
