@@ -439,3 +439,31 @@ td.strong { font-weight: 700; }
 
 /* The hidden attribute always wins over a class display rule (role-based tabs, filters, cards). */
 [hidden] { display: none !important; }
+
+/* ---------- View size: Compact (default) / Normal ---------- */
+html[data-view="compact"] { font-size: 14px; }
+html[data-view="compact"] body { font-size: 13.5px; }
+html[data-view="compact"] #app { padding: 0 14px 40px; }
+html[data-view="compact"] .topbar { margin: 0 -14px 14px; padding: 9px 14px; gap: 14px; }
+html[data-view="compact"] .brand-mark { width: 32px; height: 32px; }
+html[data-view="compact"] .tab-btn { padding: 7px 13px; }
+html[data-view="compact"] .view-header { margin-bottom: 10px; }
+html[data-view="compact"] .card { padding: 14px; }
+html[data-view="compact"] .card + .card { margin-top: 12px; }
+html[data-view="compact"] .card-title { margin-bottom: 10px; }
+html[data-view="compact"] .field-row { gap: 10px; margin-bottom: 12px; }
+html[data-view="compact"] .field input, html[data-view="compact"] .field select, html[data-view="compact"] .field textarea { padding: 6px 8px; }
+html[data-view="compact"] .btn { padding: 9px 16px; margin-top: 12px; }
+html[data-view="compact"] .btn-small, html[data-view="compact"] .btn-secondary { margin-top: 0; }
+html[data-view="compact"] .btn-small { padding: 5px 12px; }
+html[data-view="compact"] .entry-layout { grid-template-columns: 1fr 290px; gap: 12px; }
+@media (max-width: 860px) { html[data-view="compact"] .entry-layout { grid-template-columns: 1fr; } }
+html[data-view="compact"] .summary-card { top: 66px; }
+html[data-view="compact"] .summary-row { padding: 5px 0; }
+html[data-view="compact"] .today-row { padding: 7px 0; }
+html[data-view="compact"] .tiles { gap: 10px; margin-bottom: 12px; }
+html[data-view="compact"] .tile { padding: 11px 13px; }
+html[data-view="compact"] .tile .tv { font-size: 1.3rem; margin-top: 3px; }
+html[data-view="compact"] .filter-row { margin-bottom: 12px; }
+html[data-view="compact"] tbody td { padding: 6px 8px; }
+html[data-view="compact"] thead th { padding: 0 8px 6px; }

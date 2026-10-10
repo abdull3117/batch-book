@@ -3248,6 +3248,17 @@
   }
 
   document.addEventListener("DOMContentLoaded", function () {
+    const vs = $("#btn-view-size");
+    if (vs) {
+      const label = () => { vs.textContent = document.documentElement.getAttribute("data-view") === "compact" ? "Normal size" : "Compact size"; };
+      label();
+      vs.addEventListener("click", () => {
+        const next = document.documentElement.getAttribute("data-view") === "compact" ? "normal" : "compact";
+        document.documentElement.setAttribute("data-view", next);
+        try { localStorage.setItem("bbView", next); } catch (e) { /* ignore */ }
+        label();
+      });
+    }
     wireEvents();
     renderAll();
     initDb();

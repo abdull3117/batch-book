@@ -1,6 +1,7 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-view="compact">
 <head>
+<script>try { var v = localStorage.getItem("bbView"); if (v === "normal" || v === "compact") document.documentElement.setAttribute("data-view", v); } catch (e) {}</script>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Batch Book — EMR Groups</title>
@@ -11,7 +12,7 @@
 <!-- Cache-busting: GitHub Pages caches these for 10 minutes (Cache-Control: max-age=600).
      Bump the ?v= number on app.js, style.css and firebase-config.js below every time
      any of those files are redeployed, so users don't keep running a stale cached copy. -->
-<link rel="stylesheet" href="style.css?v=12" />
+<link rel="stylesheet" href="style.css?v=13" />
 </head>
 <body>
 
@@ -52,6 +53,7 @@
     <span class="sync-dot connecting" id="sync-dot"></span>
     <span id="sync-label">Connecting&hellip;</span>
     <span class="role-badge" id="role-badge" hidden></span>
+    <button class="btn btn-secondary btn-small" id="btn-view-size" type="button" title="Switch between compact and normal size"></button>
     <button class="btn btn-secondary btn-small" id="btn-logout" hidden>Log out</button>
   </div>
 </div>
@@ -727,6 +729,6 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
-<script src="app.js?v=32"></script>
+<script src="app.js?v=33"></script>
 </body>
 </html>
