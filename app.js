@@ -156,13 +156,20 @@
   function isWageLine(d) { return d && d.category === "Salaries & Wages" && /loadman|loadmen|operator/i.test(d.paidTo || ""); }
   // A factory's actual loadman + operator wages for a month, from the
   // salary sheets entered in the EMR Tracker.
+  // A wage line tagged with products (forProducts: [productId…]) — e.g. a
+  // contract mixing crew that only makes certain products — is charged to
+  // those products' batches only, not spread over the whole factory.
+  function productWageTags(d) { return d && Array.isArray(d.forProducts) && d.forProducts.length ? d.forProducts : null; }
   function monthLabourPool(m, factory) {
-    return state.trackerExpenses.reduce((a, d) => a + (monthOf(d.date) === m && d.branch === factory && isWageLine(d) ? Number(d.amount) || 0 : 0), 0);
+    return state.trackerExpenses.reduce((a, d) => a + (monthOf(d.date) === m && d.branch === factory && isWageLine(d) && !productWageTags(d) ? Number(d.amount) || 0 : 0), 0);
+  }
+  function monthTaggedWages(m, factory) {
+    return state.trackerExpenses.filter((d) => monthOf(d.date) === m && d.branch === factory && isWageLine(d) && productWageTags(d));
   }
   function salarySheetFor(m, factory) {
     const out = { loadAmt: 0, loadHead: 0, opAmt: 0, opHead: 0 };
     state.trackerExpenses.forEach((d) => {
-      if (monthOf(d.date) !== m || d.branch !== factory || !isWageLine(d)) return;
+      if (monthOf(d.date) !== m || d.branch !== factory || !isWageLine(d) || productWageTags(d)) return;
       const txt = d.paidTo || "";
       if (/loadm/i.test(txt)) { out.loadAmt += Number(d.amount) || 0; const h = txt.match(/\((\d+)\s*loadmen/i); if (h) out.loadHead += Number(h[1]); }
       else { out.opAmt += Number(d.amount) || 0; const h = txt.match(/\((\d+)\s*operators/i); if (h) out.opHead += Number(h[1]); }
@@ -184,12 +191,24 @@
   // batches by output. Batches with a fixed labour rate keep it. Days
   // without attendance fall back to sharing by output.
   function monthLabourAllocation(m, factory, rows) {
-    const pool = monthLabourPool(m, factory);
+    let pool = monthLabourPool(m, factory);
+    const tagged = monthTaggedWages(m, factory);
     if (!(pool > 0)) return null;
     const out = {};
     let fixed = 0;
     const flt = [];
     rows.forEach((e) => { const o = labourOverrideFor(e); if (o != null) { out[e.id] = o; fixed += o; } else flt.push(e); });
+    // Product-tagged wages go to that month's batches of those products
+    // (by output). If none of them were made that month, the amount joins
+    // the factory's general pool instead.
+    const extra = {};
+    tagged.forEach((d) => {
+      const amt = Number(d.amount) || 0;
+      const hit = flt.filter((e) => d.forProducts.indexOf(e.productId) !== -1);
+      const kg = hit.reduce((x, e) => x + (Number(e.outputQty) || 0), 0);
+      if (!(kg > 0)) { pool += amt; return; }
+      hit.forEach((e) => { extra[e.id] = (extra[e.id] || 0) + amt * (Number(e.outputQty) || 0) / kg; });
+    });
     const rem = Math.max(0, pool - fixed);
     const byDay = {};
     flt.forEach((e) => { (byDay[e.date] = byDay[e.date] || []).push(e); });
@@ -207,6 +226,7 @@
       const kg = byDay[d].reduce((x, e) => x + (Number(e.outputQty) || 0), 0);
       byDay[d].forEach((e) => { out[e.id] = kg > 0 ? share * (Number(e.outputQty) || 0) / kg : 0; });
     });
+    Object.keys(extra).forEach((id) => { out[id] = (out[id] || 0) + extra[id]; });
     return { alloc: out, basis: allHave ? "attendance" : "output" };
   }
   function isClosedMonth(m) { return /^\d{4}-\d{2}$/.test(m) && m < todayStr().slice(0, 7); }
