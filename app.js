@@ -142,10 +142,17 @@
     "Miscellaneous": "departmentExpenses",
   };
   const PROCESSING_FIELD_LABELS = {
-    ebCost: "EB", fuelCost: "Fuel", maintenanceCost: "Maintenance", electricalMaintenanceCost: "Electrical maint.",
+    ebCost: "EB", fuelCost: "Fuel (cashew shell)", maintenanceCost: "Maintenance", electricalMaintenanceCost: "Electrical maint.",
     stitchingExpense: "Stitching", sackExpenses: "Sack", departmentExpenses: "Department / misc", staffSalaries: "Staff salaries",
   };
   function monthOf(date) { return String(date || "").slice(0, 7); }
+  const FUEL_SUPPLIERS = { "JANANI CASHEW - PANAIYUR": "Orathur", "Royal Gold Cashew(Vasanth)": "Vikravandi" };
+  function fuelFactoryFor(supplier) {
+    if (FUEL_SUPPLIERS[supplier]) return FUEL_SUPPLIERS[supplier];
+    if (/janani/i.test(supplier || "")) return "Orathur";
+    if (/royal/i.test(supplier || "") && /cashew/i.test(supplier || "")) return "Vikravandi";
+    return null;
+  }
   function isWageLine(d) { return d && d.category === "Salaries & Wages" && /loadman|loadmen|operator/i.test(d.paidTo || ""); }
   // A factory's actual loadman + operator wages for a month, from the
   // salary sheets entered in the EMR Tracker.
@@ -251,6 +258,16 @@
       const amt = (Number(d.amount) || 0) * (factory && !d.branch ? share : 1);
       fromBills[k] = (fromBills[k] || 0) + amt;
     });
+    // Dryer fuel = cashew shell cake bought for that factory (Purchases in
+    // the EMR Tracker): Janani Cashew → Orathur, Royal Gold Cashew → Vikravandi.
+    let fuelPurch = 0;
+    state.fuelPurchases.forEach((pu) => {
+      if (monthOf(pu.date) !== m) return;
+      const f = fuelFactoryFor(pu.supplier);
+      if (!f || (factory && f !== factory)) return;
+      fuelPurch += Number(pu.value) || 0;
+    });
+    fromBills.fuelCost = (fromBills.fuelCost || 0) + fuelPurch;
     const manual = state.processingMonths[manualKey(m, factory)] || {};
     const fields = {};
     let total = 0;
@@ -258,6 +275,9 @@
       let amount, source;
       if (manual[k] !== undefined && manual[k] !== null && manual[k] !== "") { amount = Number(manual[k]) || 0; source = "manual"; }
       else if (fromBills[k]) { amount = fromBills[k]; source = "bills"; }
+      // Fuel is always the actual purchases — no budget fallback; a month
+      // with no shell-cake purchase for that factory carries no fuel.
+      else if (k === "fuelCost") { amount = 0; source = "bills"; }
       else { amount = (Number(state.labour[k]) || 0) * share; source = "budget"; }
       fields[k] = { amount, source };
       total += amount;
@@ -435,7 +455,8 @@
     editingEntryId: null, // set while the form is editing an existing batch instead of logging a new one
     jobworkCompanies: DEFAULT_JOBWORK_COMPANIES.slice(),
     viewFactory: "", // "" = both factories (consolidated), or "Orathur" / "Vikravandi"
-    trackerExpenses: [], // read-only copy of the EMR Tracker's expense log (tracker_expenses) — actual monthly bills
+    trackerExpenses: [],
+    fuelPurchases: [], // cashew shell cake purchases (dryer fuel) from the EMR Tracker // read-only copy of the EMR Tracker's expense log (tracker_expenses) — actual monthly bills
     processingMonths: {}, // settings/processingMonths.months — manual actuals per month: { "YYYY-MM": { ebCost: n, ... } }
     floatLoaded: { expenses: false, months: false, entries: false },
   };
@@ -1111,6 +1132,15 @@
         maybeAutoRecalc();
       },
       () => { state.floatLoaded.attendance = true; }
+    );
+    db.collection("tracker_purchases").where("supplier", "in", Object.keys(FUEL_SUPPLIERS)).onSnapshot(
+      (snap) => {
+        state.fuelPurchases = snap.docs.map((d) => d.data());
+        state.floatLoaded.fuel = true;
+        renderFloatingRates();
+        maybeAutoRecalc();
+      },
+      () => { state.floatLoaded.fuel = true; }
     );
     db.doc("settings/processingMonths").onSnapshot(
       (snap) => {
