@@ -364,6 +364,51 @@
 
   // Re-costs every batch of one closed month at its group's floating rate.
   // Only writes batches whose processing cost actually changes.
+  // Labour estimate for batches with no crew counted (no operators/loadmen
+  // on the batch and no attendance for that day) in a month that has no
+  // salary sheet yet — e.g. the running month, or older Vikravandi months
+  // before its sheets were entered. Uses the factory's actual labour ₹/MT
+  // (salary-sheet wages ÷ output) from the nearest finished month that has
+  // a sheet: the latest one before, else the first one after.
+  function labourRatePerMT(factory, m) {
+    const months = Array.from(new Set(state.entries.filter((e) => factoryOf(e) === factory).map((e) => monthOf(e.date))))
+      .filter((x) => x !== m && isClosedMonth(x) && monthLabourPool(x, factory) > 0).sort();
+    const pick = months.filter((x) => x < m).pop() || months.find((x) => x > m);
+    if (!pick) return null;
+    const kg = state.entries.reduce((a, e) => a + (monthOf(e.date) === pick && factoryOf(e) === factory ? Number(e.outputQty) || 0 : 0), 0);
+    if (!(kg > 0)) return null;
+    const wages = monthLabourPool(pick, factory) + monthTaggedWages(pick, factory).reduce((a, d) => a + (Number(d.amount) || 0), 0);
+    return { rate: wages / (kg / KG_PER_MT), month: pick };
+  }
+  function needsLabourEstimate(e) {
+    if (labourOverrideFor(e) != null) return false;
+    if ((Number(e.operators) || 0) + (Number(e.loadmen) || 0) > 0) return false;
+    if (attendanceFor(e.date, factoryOf(e))) return false;
+    return !(Number(e.labourCost) > 0) || !!e.labourEstimate;
+  }
+  // Running month: give uncounted batches the estimate now (the month-end
+  // salary-sheet allocation replaces it once the month closes).
+  async function recostRunningLabour() {
+    if (!state.db) return 0;
+    const batch = state.db.batch();
+    let n = 0;
+    state.entries.forEach((e) => {
+      const m = monthOf(e.date);
+      if (!/^\d{4}-\d{2}$/.test(m) || isClosedMonth(m) || !needsLabourEstimate(e)) return;
+      const r = labourRatePerMT(factoryOf(e), m);
+      if (!r) return;
+      const lab = r.rate * ((Number(e.outputQty) || 0) / KG_PER_MT);
+      if (Math.abs(lab - (Number(e.labourCost) || 0)) < 0.5 && e.labourEstimate) return;
+      const totalCost = (Number(e.rmCost) || 0) + (Number(e.processingCost) || 0) + lab;
+      const fields = { labourCost: lab, totalCost, costPerKg: e.outputQty > 0 ? totalCost / e.outputQty : 0, labourEstimate: true, labourBasis: "estimate — " + monthLabelShort(r.month) + " actual ₹/MT" };
+      if (e.jobworkCompanyId) fields.jobworkProfit = (Number(e.jobworkRevenue) || 0) - totalCost;
+      batch.update(state.db.collection("entries").doc(e.id), fields);
+      n++;
+    });
+    if (n) await batch.commit();
+    return n;
+  }
+
   async function recalcMonthProcessing(m) {
     if (!state.db || !isClosedMonth(m)) return 0;
     const snap = await state.db.collection("entries").where("date", ">=", m + "-01").where("date", "<=", m + "-31").get();
@@ -381,11 +426,20 @@
         procMeta[e.id] = { processingRatePerMT: ov != null ? null : rate, processingRateMonth: m, processingRateGroup: g.factory || "both" };
       });
     });
-    const newLab = {}, labBasis = {};
+    const newLab = {}, labBasis = {}, labEst = {};
     FACTORIES.forEach((f) => {
-      const r = monthLabourAllocation(m, f, rows.filter((e) => factoryOf(e) === f));
-      if (!r) return;
-      Object.keys(r.alloc).forEach((id) => { newLab[id] = r.alloc[id]; labBasis[id] = r.basis; });
+      const fr = rows.filter((e) => factoryOf(e) === f);
+      const r = monthLabourAllocation(m, f, fr);
+      if (r) { Object.keys(r.alloc).forEach((id) => { newLab[id] = r.alloc[id]; labBasis[id] = r.basis; }); return; }
+      // No salary sheet for this factory and month: estimate the batches
+      // that have no crew counted at all.
+      const est = labourRatePerMT(f, m);
+      if (!est) return;
+      fr.forEach((e) => {
+        if (!needsLabourEstimate(e)) return;
+        newLab[e.id] = est.rate * ((Number(e.outputQty) || 0) / KG_PER_MT);
+        labEst[e.id] = est.month;
+      });
     });
     rows.forEach((e) => {
       const proc = newProc[e.id] != null ? newProc[e.id] : (Number(e.processingCost) || 0);
@@ -396,7 +450,8 @@
       if (procSame && labSame) return;
       const totalCost = (Number(e.rmCost) || 0) + proc + lab;
       const fields = Object.assign({ processingCost: proc, labourCost: lab, totalCost, costPerKg: e.outputQty > 0 ? totalCost / e.outputQty : 0 }, pm || {});
-      if (newLab[e.id] != null) { fields.labourMonth = m; fields.labourBasis = "salary sheet by " + labBasis[e.id]; }
+      if (labEst[e.id]) { fields.labourMonth = m; fields.labourEstimate = true; fields.labourBasis = "estimate — " + monthLabelShort(labEst[e.id]) + " actual ₹/MT"; }
+      else if (newLab[e.id] != null) { fields.labourMonth = m; fields.labourEstimate = false; fields.labourBasis = "salary sheet by " + labBasis[e.id]; }
       if (e.jobworkCompanyId) fields.jobworkProfit = (Number(e.jobworkRevenue) || 0) - totalCost;
       batch.update(state.db.collection("entries").doc(e.id), fields);
       n++;
@@ -411,6 +466,7 @@
     let changed = 0;
     try {
       for (const m of months) changed += await recalcMonthProcessing(m);
+      changed += await recostRunningLabour();
       if (manual || changed) toast(changed ? "Processing cost re-costed on " + changed + " batch" + (changed === 1 ? "" : "es") + " using each month's actual rate." : "All past months are already at their actual rate.", "success");
     } catch (e) {
       toast("Could not recalculate processing costs: " + e.message, "error");
@@ -652,6 +708,10 @@
       labourCost = companyLabour * (outputQty / KG_PER_MT);
     } else if (productLabour != null) {
       labourCost = productLabour;
+    } else if ((Number(operators) || 0) + (Number(loadmen) || 0) === 0 && date && !attendanceFor(date, factory || "Orathur") && labourRatePerMT(factory || "Orathur", monthOf(date))) {
+      // No crew counted for this batch or day: estimate from the factory's
+      // last actual labour ₹/MT until attendance or the salary sheet is in.
+      labourCost = labourRatePerMT(factory || "Orathur", monthOf(date)).rate * (outputQty / KG_PER_MT);
     } else {
       labourCost = (Number(operators) || 0) * (Number(state.labour.operatorRate) || 0) +
         (Number(loadmen) || 0) * (Number(state.labour.loadmanRate) || 0);
