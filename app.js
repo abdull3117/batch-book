@@ -229,6 +229,7 @@
     Object.keys(extra).forEach((id) => { out[id] = (out[id] || 0) + extra[id]; });
     return { alloc: out, basis: allHave ? "attendance" : "output" };
   }
+  function monthLabelShort(m) { return new Date(m + "-01T00:00:00").toLocaleDateString("en-IN", { month: "short", year: "numeric" }); }
   function isClosedMonth(m) { return /^\d{4}-\d{2}$/.test(m) && m < todayStr().slice(0, 7); }
 
   // Factories — every batch is tagged with the one it was made at, and
@@ -328,6 +329,37 @@
     const groups = monthGroups(rows);
     const g = groups.find((x) => x.factory === (groups[0].factory ? factory : "")) || null;
     return g ? groupRate(m, g, monthKg) : null;
+  }
+
+  // Monthly output is not a fixed budget figure: at every month end it is
+  // taken from that month's batches. While a month is running, its batches
+  // are costed at the last finished month's actual rate for that factory
+  // (that month's actual processing cost ÷ its actual output) and then
+  // re-costed at their own month's actual rate once the month closes.
+  function lastClosedMonthFor(factory) {
+    const months = Array.from(new Set(state.entries.filter((e) => !factory || factoryOf(e) === factory).map((e) => monthOf(e.date))))
+      .filter((m) => isClosedMonth(m)).sort().reverse();
+    for (const m of months) {
+      const kg = state.entries.reduce((a, e) => a + (monthOf(e.date) === m && (!factory || factoryOf(e) === factory) ? Number(e.outputQty) || 0 : 0), 0);
+      if (kg > 0) return { month: m, mt: kg / KG_PER_MT };
+    }
+    return null;
+  }
+  function runningRateFor(factory) {
+    const last = lastClosedMonthFor(factory);
+    if (!last) return null;
+    const rows = state.entries.filter((e) => monthOf(e.date) === last.month);
+    const monthKg = rows.reduce((a, e) => a + (Number(e.outputQty) || 0), 0);
+    const groups = monthGroups(rows);
+    const g = groups.find((x) => x.factory === (groups[0].factory ? factory : "")) || null;
+    let rate = g ? groupRate(last.month, g, monthKg) : null;
+    // No actual rate for that month (e.g. every batch on a fixed rate):
+    // the monthly budget amounts ÷ that month's actual output.
+    if (rate == null && last.mt > 0) {
+      const total = monthlyProcessingCostTotal(state.labour);
+      rate = total > 0 ? total / last.mt : null;
+    }
+    return rate == null ? null : { rate, month: last.month, mt: last.mt };
   }
 
   // Re-costs every batch of one closed month at its group's floating rate.
@@ -605,7 +637,8 @@
       processingCost = override;
     } else {
       const floating = date ? floatingRateFor(monthOf(date), factory) : null;
-      const perMT = floating != null ? floating : processingCostPerMT(state.labour);
+      const running = floating == null ? runningRateFor(factory || "Orathur") : null;
+      const perMT = floating != null ? floating : running ? running.rate : processingCostPerMT(state.labour);
       processingCost = perMT != null
         ? perMT * (outputQty / KG_PER_MT)
         : (Number(state.labour.processingCost) || 0);
@@ -3095,10 +3128,18 @@
     };
     const total = monthlyProcessingCostTotal(draft);
     totalEl.textContent = fmtINR(total);
+    const outEl = $("#proc-auto-output");
+    const outs = [], rates = [];
+    FACTORIES.forEach((f) => {
+      const last = lastClosedMonthFor(f);
+      if (last) outs.push(f + " " + fmtNum(last.mt, 1) + " MT (" + monthLabelShort(last.month) + ")");
+      const r = runningRateFor(f);
+      if (r) rates.push(f + " " + fmtINR(r.rate) + " / MT");
+    });
+    if (outEl) outEl.textContent = outs.length ? outs.join(" · ") : "No finished month yet";
     const perMT = processingCostPerMT(draft);
-    rateEl.textContent = perMT != null
-      ? fmtINR(perMT) + " / MT"
-      : "Not set up — using fallback";
+    rateEl.textContent = rates.length ? rates.join(" · ")
+      : perMT != null ? fmtINR(perMT) + " / MT" : "Not set up — using fallback";
   }
 
   function renderFloatingRates() {
@@ -3112,6 +3153,11 @@
       PROCESSING_BREAKDOWN_FIELDS.map((k) => '<th class="num">' + PROCESSING_FIELD_LABELS[k] + '</th>').join("") +
       '</tr></thead><tbody>';
     const budgetRate = processingCostPerMT(state.labour);
+    const runningCell = (f) => {
+      const r = runningRateFor(f || "Orathur");
+      if (r) return money(r.rate) + ' <span class="hint">' + monthLabelShort(r.month) + ' actual</span>';
+      return budgetRate != null ? money(budgetRate) + ' <span class="hint">budget</span>' : "—";
+    };
     months.forEach((m) => {
       const rows = state.entries.filter((e) => monthOf(e.date) === m);
       const monthKg = rows.reduce((a, e) => a + (Number(e.outputQty) || 0), 0);
@@ -3126,7 +3172,7 @@
         const rate = closed ? groupRate(m, g, monthKg) : null;
         const fname = g.factory || ('Both' + (untagged ? ' <span class="hint">(' + untagged + ' untagged)</span>' : ''));
         html += '<tr><td>' + (gi === 0 ? label + (closed ? "" : ' <span class="hint">(running)</span>') : "") + '</td><td>' + fname + '</td><td class="num">' + fmtNum(kg / KG_PER_MT, 1) + '</td>' +
-          '<td class="num"><strong>' + (closed ? (rate != null ? money(rate) : "—") : (budgetRate != null ? money(budgetRate) + ' <span class="hint">budget</span>' : "—")) + '</strong></td>' +
+          '<td class="num"><strong>' + (closed ? (rate != null ? money(rate) : "—") : runningCell(g.factory)) + '</strong></td>' +
           '<td class="num"><strong>' + money(a.total) + '</strong></td>' +
           PROCESSING_BREAKDOWN_FIELDS.map((k) => {
             const f = a.fields[k];

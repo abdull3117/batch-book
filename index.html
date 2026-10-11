@@ -760,12 +760,11 @@
               <input type="number" min="0" step="any" id="s-staff-salaries" />
             </div>
           </div>
-          <div class="field" style="max-width:280px; margin-top:4px;">
-            <label for="s-budgeted-output-mt">Budgeted monthly output (MT)</label>
-            <input type="number" min="0" step="any" id="s-budgeted-output-mt" placeholder="e.g. 300" />
-          </div>
-          <div class="summary-row" style="margin-top:12px;"><span class="k">Monthly total</span><span class="v" id="proc-monthly-total">&#8377;0</span></div>
-          <div class="summary-row"><span class="k">Rate applied per batch</span><span class="v" id="proc-per-mt-rate">Not set up &mdash; using fallback</span></div>
+          <div class="summary-row" style="margin-top:12px;"><span class="k">Monthly total (budget)</span><span class="v" id="proc-monthly-total">&#8377;0</span></div>
+          <div class="summary-row"><span class="k">Monthly output</span><span class="v" id="proc-auto-output">&ndash;</span></div>
+          <div class="summary-row"><span class="k">Rate applied to this month&rsquo;s batches</span><span class="v" id="proc-per-mt-rate">&ndash;</span></div>
+          <p class="hint" style="margin-top:4px;">Monthly output isn&rsquo;t typed in &mdash; it&rsquo;s taken from the batches at every month end. This month&rsquo;s batches use last month&rsquo;s actual rate (actual processing cost &divide; actual output) for each factory, and are re-costed at this month&rsquo;s own actual rate once it ends.</p>
+          <input type="hidden" id="s-budgeted-output-mt" />
           <button class="btn btn-primary" id="btn-save-processing-breakdown" style="margin-top:8px;">Save breakdown</button>
         </div>
     </div>
@@ -834,6 +833,6 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
-<script src="app.js?v=43"></script>
+<script src="app.js?v=44"></script>
 </body>
 </html>
