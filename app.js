@@ -1227,6 +1227,21 @@
     }
   }
 
+  // Opened inside the EMR Tracker (its Batch Book tab), the tracker's own
+  // login is enough — no second password. Only the tracker's main page
+  // counts; Batch Book's own links (including the emr-tracker/batchbook/
+  // shortcut) still ask for the password as usual. Nothing is saved, so
+  // this never unlocks Batch Book anywhere else.
+  function trackerEmbedRole() {
+    try {
+      if (window.parent === window) return null;
+      const pl = window.parent.location;
+      if (pl.origin !== location.origin || !/^\/emr-tracker\/(index\.html)?$/.test(pl.pathname)) return null;
+      const r = window.parent.localStorage.getItem("emrTrackerAuthRole");
+      return r === "admin" || r === "team" ? r : null;
+    } catch (e) { return null; }
+  }
+
   function lockApp() {
     try { sessionStorage.removeItem(ROLE_STORAGE_KEY); } catch (e) { /* ignore */ }
     state.role = null;
@@ -3752,7 +3767,10 @@
     // Already unlocked earlier this browser tab session? Skip the gate.
     let savedRole = null;
     try { savedRole = sessionStorage.getItem(ROLE_STORAGE_KEY); } catch (e) { /* ignore */ }
-    if (savedRole === "admin" || savedRole === "team") {
+    const trackerRole = trackerEmbedRole();
+    if (trackerRole) {
+      applyRole(trackerRole);
+    } else if (savedRole === "admin" || savedRole === "team") {
       applyRole(savedRole);
     } else if (savedRole && savedRole.indexOf(COMPANY_ROLE_PREFIX) === 0) {
       applyRole("company", savedRole.slice(COMPANY_ROLE_PREFIX.length));
