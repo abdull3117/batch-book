@@ -136,7 +136,9 @@
   // ---------------------------------------------------------------
   const EXPENSE_CATEGORY_FIELD = {
     "EB Bills": "ebCost",
-    "Fuel & Transport": "fuelCost",
+    // "Fuel & Transport" bills (firewood, LPG, diesel, petrol…) are NOT
+    // production fuel — dryer fuel is only the cashew shell cake bought
+    // from Janani Cashew (Orathur) and Royal Gold Cashew (Vikravandi).
     "Maintenance & Repairs": "maintenanceCost",
     "Salaries & Wages": "staffSalaries",
     "Miscellaneous": "departmentExpenses",
