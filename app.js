@@ -140,6 +140,7 @@
     "Maintenance & Repairs": "maintenanceCost",
     "Salaries & Wages": "staffSalaries",
     "Miscellaneous": "departmentExpenses",
+    "Stitching": "stitchingExpense",
   };
   const PROCESSING_FIELD_LABELS = {
     ebCost: "EB", fuelCost: "Fuel (cashew shell)", maintenanceCost: "Maintenance", electricalMaintenanceCost: "Electrical maint.",
