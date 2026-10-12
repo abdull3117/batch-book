@@ -407,6 +407,7 @@
       const totalCost = (Number(e.rmCost) || 0) + (Number(e.processingCost) || 0) + lab;
       const fields = { labourCost: lab, totalCost, costPerKg: e.outputQty > 0 ? totalCost / e.outputQty : 0, labourEstimate: true, labourBasis: "estimate — " + monthLabelShort(r.month) + " actual ₹/MT" };
       if (e.jobworkCompanyId) fields.jobworkProfit = (Number(e.jobworkRevenue) || 0) - totalCost;
+      if (state.autoRecalcRun) { if (!canAutoWrite(e.id)) return; noteAutoWrite(e.id); }
       batch.update(state.db.collection("entries").doc(e.id), fields);
       n++;
     });
@@ -458,6 +459,7 @@
       if (labEst[e.id]) { fields.labourMonth = m; fields.labourEstimate = true; fields.labourBasis = "estimate — " + monthLabelShort(labEst[e.id]) + " actual ₹/MT"; }
       else if (newLab[e.id] != null) { fields.labourMonth = m; fields.labourEstimate = false; fields.labourBasis = "salary sheet by " + labBasis[e.id]; }
       if (e.jobworkCompanyId) fields.jobworkProfit = (Number(e.jobworkRevenue) || 0) - totalCost;
+      if (state.autoRecalcRun) { if (!canAutoWrite(e.id)) return; noteAutoWrite(e.id); }
       batch.update(state.db.collection("entries").doc(e.id), fields);
       n++;
     });
@@ -465,8 +467,40 @@
     return n;
   }
 
+  // Safety against two copies of Batch Book (e.g. an old version left open
+  // on another phone) re-costing the same batches back and forth forever:
+  //  • every copy records its costing version; an older copy stops writing
+  //    and asks to be reloaded;
+  //  • automatic runs happen at most once every 5 minutes per copy;
+  //  • one copy never rewrites the same batch more than 3 times per visit.
+  const CALC_VERSION = 51;
+  const autoWriteCount = {};
+  let lastAutoRecalcAt = 0;
+  function canAutoWrite(id) { return (autoWriteCount[id] || 0) < 3; }
+  function noteAutoWrite(id) { autoWriteCount[id] = (autoWriteCount[id] || 0) + 1; }
+  async function calcVersionOk() {
+    try {
+      const ref = state.db.doc("settings/calcVersion");
+      const snap = await ref.get();
+      const v = snap.exists ? Number(snap.data().version) || 0 : 0;
+      if (v > CALC_VERSION) {
+        if (!state.calcOutdatedWarned) { state.calcOutdatedWarned = true; toast("A newer Batch Book version is in use — please reload this page.", "warn"); }
+        return false;
+      }
+      if (v < CALC_VERSION) await ref.set({ version: CALC_VERSION, at: new Date().toISOString() });
+      return true;
+    } catch (e) { return false; }
+  }
+
   async function recalcAllClosedMonths(manual) {
     if (!state.db) { if (manual) toast("Open the published link to recalculate.", "warn"); return; }
+    if (!manual) {
+      const now = Date.now();
+      if (now - lastAutoRecalcAt < 5 * 60 * 1000) return;
+      lastAutoRecalcAt = now;
+    }
+    if (!(await calcVersionOk())) return;
+    state.autoRecalcRun = !manual;
     const months = Array.from(new Set(state.entries.map((e) => monthOf(e.date)))).filter(isClosedMonth).sort();
     let changed = 0;
     try {
@@ -475,6 +509,8 @@
       if (manual || changed) toast(changed ? "Processing cost re-costed on " + changed + " batch" + (changed === 1 ? "" : "es") + " using each month's actual rate." : "All past months are already at their actual rate.", "success");
     } catch (e) {
       toast("Could not recalculate processing costs: " + e.message, "error");
+    } finally {
+      state.autoRecalcRun = false;
     }
   }
 
