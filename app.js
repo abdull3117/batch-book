@@ -287,7 +287,9 @@
     let fuelPurch = 0;
     state.fuelPurchases.forEach((pu) => {
       if (monthOf(pu.date) !== m) return;
-      const f = fuelFactoryFor(pu.supplier);
+      // A purchase can say which factory received it (e.g. a Royal load
+      // delivered to Orathur); otherwise the supplier's usual factory.
+      const f = (pu.fuelFactory === "Orathur" || pu.fuelFactory === "Vikravandi") ? pu.fuelFactory : fuelFactoryFor(pu.supplier);
       if (!f || (factory && f !== factory)) return;
       fuelPurch += Number(pu.value) || 0;
     });
