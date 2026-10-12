@@ -149,7 +149,7 @@
     stitchingExpense: "Stitching", sackExpenses: "Sack", departmentExpenses: "Department / misc", staffSalaries: "Staff salaries",
   };
   function monthOf(date) { return String(date || "").slice(0, 7); }
-  const FUEL_SUPPLIERS = { "JANANI CASHEW - PANAIYUR": "Orathur", "Royal Gold Cashew(Vasanth)": "Vikravandi" };
+  const FUEL_SUPPLIERS = { "JANANI CASHEW - PANAIYUR": "Orathur", "Royal Gold Cashew(Vasanth)": "Vikravandi", "NS Cashews Madurai": "Vikravandi" };
   function fuelFactoryFor(supplier) {
     if (FUEL_SUPPLIERS[supplier]) return FUEL_SUPPLIERS[supplier];
     if (/janani/i.test(supplier || "")) return "Orathur";
