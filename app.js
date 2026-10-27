@@ -183,6 +183,59 @@
     const a = state.attendance[dayLabourKey(date, factory)];
     return a ? { operators: Number(a.operators) || 0, loadmen: Number(a.loadmen) || 0 } : null;
   }
+
+  // ---------------------------------------------------------------
+  // Cross-check with the EMR Tracker's Attendance tab. There, each
+  // operator / loadman is marked by name (P present = 1, ½ half day = 0.5).
+  // Counting those marks gives a second figure for the day's crew: it
+  // pre-fills the crew here when Batch Book has none, and any day where
+  // the two disagree is flagged so a supervisor can fix one of them.
+  // Staff roles: "Operator" counts as an operator, anything with "load"
+  // (Loadman, Load man, Loader) as a loadman.
+  // ---------------------------------------------------------------
+  function crewRoleOf(p) {
+    const r = String((p && p.role) || "");
+    if (/operator/i.test(r)) return "op";
+    if (/load/i.test(r)) return "ld";
+    return "";
+  }
+  function trackerCrewAvailable(factory) {
+    return state.trackerRoster.some((p) => crewRoleOf(p) && (p.factory || "Orathur") === factory);
+  }
+  // { operators, loadmen } counted from the tracker's marks for that day,
+  // or null when no operator/loadman at that factory is marked that day.
+  function trackerCrewFor(date, factory) {
+    if (!date || !factory) return null;
+    trackerAttLoad(monthOf(date));
+    const marks = ((state.trackerAtt[monthOf(date)] || {})[date]) || {};
+    let op = 0, ld = 0, any = false;
+    state.trackerRoster.forEach((p) => {
+      const role = crewRoleOf(p);
+      if (!role || (p.factory || "Orathur") !== factory) return;
+      const v = marks[p.id];
+      if (!v) return;
+      any = true;
+      const n = v === "P" ? 1 : v === "H" ? 0.5 : 0;
+      if (role === "op") op += n; else ld += n;
+    });
+    return any ? { operators: op, loadmen: ld } : null;
+  }
+  // "ok" | "mismatch" | "bb-only" | "tracker-only" | "" (nothing either side)
+  function crewCheck(date, factory) {
+    const a = attendanceFor(date, factory), t = trackerCrewFor(date, factory);
+    if (a && t) return (a.operators === t.operators && a.loadmen === t.loadmen) ? "ok" : "mismatch";
+    if (t) return "tracker-only";
+    if (a) return "bb-only";
+    return "";
+  }
+  function trackerAttLoad(m) {
+    if (!m || !state.db || state.trackerAttLoaded[m]) return;
+    state.trackerAttLoaded[m] = true;
+    state.db.doc("tracker_syncMeta/staffAttendance_" + m).onSnapshot(
+      (snap) => { state.trackerAtt[m] = (snap.exists && snap.data().days) || {}; renderAttendance(); },
+      () => {}
+    );
+  }
   function labourOverrideFor(e) {
     const c = companyLabourCostOverride(e.jobworkCompanyId);
     if (c != null) return c * ((Number(e.outputQty) || 0) / KG_PER_MT);
@@ -597,6 +650,7 @@
     entries: [],
     stock: [],
     dayLabour: {}, // dayLabourKey(date, factory) -> { operators, loadmen } — that factory's daily attendance, cached as loaded
+    trackerRoster: [], trackerAtt: {}, trackerAttLoaded: {}, // EMR Tracker staff attendance, for the crew cross-check
     attendance: {}, // every dayLabour doc (live), for the monthly attendance vs salary-sheet check
     activeTab: "entry",
     materialFilter: "",
@@ -1277,6 +1331,10 @@
       },
       () => { state.floatLoaded.expenses = true; maybeAutoRecalc(); }
     );
+    db.doc("tracker_syncMeta/staffRoster").onSnapshot(
+      (snap) => { state.trackerRoster = (snap.exists && snap.data().people) || []; renderAttendance(); },
+      () => {}
+    );
     db.collection("dayLabour").limit(3000).onSnapshot(
       (snap) => {
         state.attendance = {};
@@ -1692,8 +1750,12 @@
       const lbl = $("#f-attendance-title");
       if (lbl) lbl.textContent = "Attendance today" + (factory ? " at " + factory : "") + " (required)";
       const existing = factory ? await loadDayLabourForDate(date, factory) : null;
-      if ($("#f-daylabour-operators")) $("#f-daylabour-operators").value = existing ? existing.operators : "";
-      if ($("#f-daylabour-loadmen")) $("#f-daylabour-loadmen").value = existing ? existing.loadmen : "";
+      // Nothing saved here yet: use the EMR Tracker's attendance marks.
+      const fromTracker = !existing && factory ? trackerCrewFor(date, factory) : null;
+      const use = existing || fromTracker;
+      if ($("#f-daylabour-operators")) $("#f-daylabour-operators").value = use ? use.operators : "";
+      if ($("#f-daylabour-loadmen")) $("#f-daylabour-loadmen").value = use ? use.loadmen : "";
+      if (lbl && fromTracker) lbl.textContent += " · filled from EMR Tracker attendance";
     }
     updateLiveSummary();
   }
@@ -3742,10 +3804,22 @@
     const d = $("#att-date") ? $("#att-date").value : "";
     const f = $("#att-factory") ? $("#att-factory").value : "";
     if (d && f && document.activeElement !== $("#att-operators") && document.activeElement !== $("#att-loadmen")) {
-      const a = attendanceFor(d, f);
-      $("#att-operators").value = a ? a.operators : "";
-      $("#att-loadmen").value = a ? a.loadmen : "";
-      $("#att-status").textContent = a ? "Saved for " + f + " on " + d + "." : "Not entered yet for " + f + " on " + d + ".";
+      const a = attendanceFor(d, f), t = trackerCrewFor(d, f);
+      const use = a || t;
+      $("#att-operators").value = use ? use.operators : "";
+      $("#att-loadmen").value = use ? use.loadmen : "";
+      const st = $("#att-status");
+      st.style.color = ""; st.style.fontWeight = "";
+      if (a && t && (a.operators !== t.operators || a.loadmen !== t.loadmen)) {
+        st.textContent = "Mismatch: saved here " + a.operators + " operators / " + a.loadmen + " loadmen, but the EMR Tracker attendance marks " + t.operators + " / " + t.loadmen + ". Correct whichever is wrong.";
+        st.style.color = "var(--critical)"; st.style.fontWeight = "700";
+      } else if (a) {
+        st.textContent = "Saved for " + f + " on " + d + "." + (t ? " Matches the EMR Tracker attendance ✓" : "");
+      } else if (t) {
+        st.textContent = "Filled from the EMR Tracker attendance (" + t.operators + " operators, " + t.loadmen + " loadmen). Tap Save attendance to confirm.";
+      } else {
+        st.textContent = "Not entered yet for " + f + " on " + d + ".";
+      }
     }
     // month selector
     const ms = $("#att-month");
@@ -3764,7 +3838,9 @@
     // register
     const [yy, mm] = m.split("-").map(Number);
     const daysIn = new Date(yy, mm, 0).getDate();
-    let html = '<div class="table-wrap max-scroll"><table><thead><tr><th>Date</th>' + fs.map((f) => '<th class="num">' + f + ' operators</th><th class="num">' + f + ' loadmen</th><th class="num">' + f + ' output (MT)</th>').join("") + '</tr></thead><tbody>';
+    trackerAttLoad(m);
+    let mismatches = 0, trackerOnly = 0;
+    let html = '<div class="table-wrap max-scroll"><table><thead><tr><th>Date</th>' + fs.map((f) => '<th class="num">' + f + ' operators</th><th class="num">' + f + ' loadmen</th><th class="num">' + f + ' output (MT)</th>' + (trackerCrewAvailable(f) ? '<th>' + f + ' vs Tracker</th>' : '')).join("") + '</tr></thead><tbody>';
     const tot = {};
     fs.forEach((f) => { tot[f] = { op: 0, ld: 0, kg: 0, days: 0, missing: 0 }; });
     for (let day = daysIn; day >= 1; day--) {
@@ -3779,11 +3855,24 @@
         const miss = kg > 0 && !a;
         if (miss) tot[f].missing++;
         cells += '<td class="num">' + (a ? a.operators : (miss ? '<span style="color:var(--critical);font-weight:700;">missing</span>' : "—")) + '</td><td class="num">' + (a ? a.loadmen : (miss ? '<span style="color:var(--critical);font-weight:700;">missing</span>' : "—")) + '</td><td class="num">' + (kg ? fmtNum(kg / KG_PER_MT, 1) : "—") + '</td>';
+        if (trackerCrewAvailable(f)) {
+          const chk = crewCheck(date, f), t = trackerCrewFor(date, f);
+          if (chk) any = true;
+          if (chk === "mismatch") mismatches++;
+          if (chk === "tracker-only") trackerOnly++;
+          cells += '<td>' + (chk === "ok" ? '<span style="color:var(--good, #1a8f5a);font-weight:700;">✓ match</span>'
+            : chk === "mismatch" ? '<span style="color:var(--critical);font-weight:700;">⚠ Tracker ' + t.operators + ' / ' + t.loadmen + '</span>'
+            : chk === "tracker-only" ? '<span style="color:var(--critical);font-weight:700;">Not saved here · Tracker ' + t.operators + ' / ' + t.loadmen + '</span>'
+            : chk === "bb-only" ? '<span style="opacity:.7;">not marked in Tracker</span>' : "—") + '</td>';
+        }
       });
       if (any) html += '<tr><td>' + date + '</td>' + cells + '</tr>';
     }
     html += '<tr style="font-weight:800;"><td>Total</td>' + fs.map((f) => '<td class="num">' + tot[f].op + '</td><td class="num">' + tot[f].ld + '</td><td class="num">' + fmtNum(tot[f].kg / KG_PER_MT, 1) + '</td>').join("") + '</tr></tbody></table></div>';
     const missing = fs.reduce((a, f) => a + tot[f].missing, 0);
+    if (mismatches || trackerOnly) html = '<p class="factory-note" style="color:var(--critical);font-weight:700;">' +
+      (mismatches ? mismatches + ' day' + (mismatches === 1 ? "" : "s") + ' where operators/loadmen here don\'t match the EMR Tracker attendance. ' : "") +
+      (trackerOnly ? trackerOnly + ' day' + (trackerOnly === 1 ? "" : "s") + ' marked in the EMR Tracker but not saved here — pick the date above and tap Save attendance.' : "") + '</p>' + html;
     if (missing) html = '<p class="factory-note">' + missing + ' day' + (missing === 1 ? " has" : "s have") + ' production logged but no attendance. Enter it above so wages are shared correctly.</p>' + html;
     if ($("#att-register")) $("#att-register").innerHTML = html;
 
