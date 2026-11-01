@@ -3453,7 +3453,7 @@
     // Every year from the first batch (or budget) to next year.
     const years = state.entries.map((e) => monthOf(e.date)).concat(Object.keys(own))
       .filter((m) => /^\d{4}-\d{2}$/.test(m)).map((m) => +m.slice(0, 4));
-    const first = Math.min(+now.slice(0, 4), ...years), last = +now.slice(0, 4) + 1;
+    const first = Math.min(2017, ...years), last = +now.slice(0, 4) + 1; // list starts at 2017
     let yh = "";
     for (let y = last; y >= first; y--) {
       const n = Object.keys(own).filter((k) => k.slice(0, 4) === String(y)).length;
