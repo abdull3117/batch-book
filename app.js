@@ -718,6 +718,38 @@
   function materialById(id) {
     return state.materials.find((x) => x.id === id);
   }
+  // ---------------------------------------------------------------
+  // Billing company — which group firm the batch is billed under.
+  // Rule (from 25-09-2026): Silverline (SFL) job work → MYM Agro Industries,
+  // SKY WIN → EMR Agro Industries; before that both were billed under
+  // EMR Agro Traders. Any batch can be set by hand on the Log Batch form;
+  // a hand-set firm always wins over the rule.
+  // ---------------------------------------------------------------
+  const BILLING_FIRMS = ["EMR Fertilizers", "EMR Agro Traders", "EMR Agro Industries", "MYM Agro Industries", "Raja Agro Industries"];
+  const BILLING_SWITCH_DATE = "2026-09-25";
+  function billingRuleFor(companyId, companyName, date) {
+    const n = String(companyName || (jobCompanyById(companyId) || {}).name || companyId || "");
+    const after = (date || "") >= BILLING_SWITCH_DATE;
+    if (/silver\s*line|\bsfl\b/i.test(n)) return after ? "MYM Agro Industries" : "EMR Agro Traders";
+    if (/sky\s*win/i.test(n)) return after ? "EMR Agro Industries" : "EMR Agro Traders";
+    return "";
+  }
+  function billingFirmOf(e) {
+    if (e.billingFirm) return e.billingFirm;
+    return e.jobworkCompanyId ? billingRuleFor(e.jobworkCompanyId, e.jobworkCompanyName, e.date) : "";
+  }
+  // Keeps the form's "Billed under" in step with the rule until someone
+  // picks a firm by hand.
+  function syncBillingFirmField() {
+    const sel = $("#f-billing-firm");
+    if (!sel || sel.dataset.manual === "1") return;
+    const cid = $("#f-jobwork-company") ? $("#f-jobwork-company").value : "";
+    const date = $("#f-date") ? $("#f-date").value : "";
+    sel.value = cid ? billingRuleFor(cid, "", date) : "";
+    const hint = $("#f-billing-hint");
+    if (hint) hint.textContent = sel.value ? "Set automatically from the billing rule — change it if this batch is billed differently." : "";
+  }
+
   function jobCompanyById(id) {
     return state.jobworkCompanies.find((c) => c.id === id);
   }
@@ -1923,6 +1955,8 @@
       createdAt: (existing && existing.createdAt) || new Date().toISOString(),
     };
     if (editingId) payload.updatedAt = new Date().toISOString();
+    const billSel = $("#f-billing-firm");
+    if (billSel && billSel.value) payload.billingFirm = billSel.value;
 
     if (jobworkCompanyId) {
       const company = jobCompanyById(jobworkCompanyId);
@@ -2022,8 +2056,10 @@
     $("#f-remarks").value = "";
     if ($("#f-jobwork-company")) $("#f-jobwork-company").value = "";
     if ($("#f-jobwork-rate-input")) $("#f-jobwork-rate-input").value = "";
+    if ($("#f-billing-firm")) { $("#f-billing-firm").dataset.manual = ""; $("#f-billing-firm").value = ""; }
     $all(".mat-input").forEach((i) => (i.value = ""));
     if (keepDate) $("#f-date").value = keepDate;
+    syncBillingFirmField();
     updateLiveSummary();
   }
 
@@ -2117,6 +2153,11 @@
     $("#f-loadmen").value = entry.loadmen || "";
     $("#f-remarks").value = opts.keepRemarks ? (entry.remarks || "") : "";
     if ($("#f-jobwork-company")) $("#f-jobwork-company").value = entry.jobworkCompanyId || "";
+    if ($("#f-billing-firm")) {
+      $("#f-billing-firm").dataset.manual = entry.billingFirm ? "1" : "";
+      $("#f-billing-firm").value = billingFirmOf(entry);
+      if ($("#f-billing-hint")) $("#f-billing-hint").textContent = entry.billingFirm ? "" : (billingFirmOf(entry) ? "From the billing rule." : "");
+    }
     if ($("#f-jobwork-rate-input")) {
       $("#f-jobwork-rate-input").value = entry.jobworkRateIsManual && entry.jobworkRatePerMT ? entry.jobworkRatePerMT : "";
     }
@@ -2549,8 +2590,10 @@
     const end = $("#rep-end") ? $("#rep-end").value : "";
     const productId = $("#rep-product") ? $("#rep-product").value : "";
     const companyId = $("#rep-company") ? $("#rep-company").value : "";
+    const billing = $("#rep-billing") ? $("#rep-billing").value : "";
     return state.entries.filter((e) => {
       if (!inView(e)) return false;
+      if (billing === "__none__" ? !!billingFirmOf(e) : (billing && billingFirmOf(e) !== billing)) return false;
       if (start && e.date < start) return false;
       if (end && e.date > end) return false;
       if (productId && e.productId !== productId) return false;
@@ -2584,9 +2627,32 @@
     host.innerHTML = html + '</tbody></table></div>';
   }
 
+  // Company-wise statement: the filtered batches grouped by the group firm
+  // they're billed under.
+  function renderBillingSummary() {
+    const host = $("#billing-summary");
+    if (!host) return;
+    const rows = filteredEntries();
+    const money = (v) => "₹" + Math.round(v).toLocaleString("en-IN");
+    const groups = BILLING_FIRMS.concat([""]);
+    let html = '<div class="table-wrap"><table><thead><tr><th>Billed under</th><th class="num">Batches</th><th class="num">Output (MT)</th><th class="num">Total cost</th><th class="num">Cost / MT</th><th class="num">Job-work revenue</th><th class="num">Profit / Loss</th></tr></thead><tbody>';
+    const T = { n: 0, kg: 0, tot: 0, rev: 0, pl: 0 };
+    groups.forEach((g) => {
+      const r = rows.filter((e) => billingFirmOf(e) === g);
+      if (!r.length && g === "") return;
+      const t = { n: r.length, kg: 0, tot: 0, rev: 0, pl: 0 };
+      r.forEach((e) => { t.kg += Number(e.outputQty) || 0; t.tot += Number(e.totalCost) || 0; if (e.jobworkCompanyId) { t.rev += Number(e.jobworkRevenue) || 0; t.pl += Number(e.jobworkProfit) || 0; } });
+      Object.keys(T).forEach((k) => { T[k] += t[k]; });
+      html += '<tr' + (t.n ? '' : ' style="opacity:.55"') + '><td>' + (g || "<em>Not set</em> <span class=\"hint\">(regular production &amp; other companies)</span>") + '</td><td class="num">' + t.n + '</td><td class="num">' + fmtNum(t.kg / KG_PER_MT, 2) + '</td><td class="num">' + money(t.tot) + '</td><td class="num">' + (t.kg ? money(t.tot / (t.kg / KG_PER_MT)) : "—") + '</td><td class="num">' + (t.rev ? money(t.rev) : "—") + '</td><td class="num' + (t.pl < 0 ? ' pl-negative' : t.pl > 0 ? ' pl-positive' : '') + '">' + (t.rev ? (t.pl < 0 ? "-" : "") + money(Math.abs(t.pl)) : "—") + '</td></tr>';
+    });
+    html += '<tr class="fs-total"><td><strong>Total</strong></td><td class="num">' + T.n + '</td><td class="num">' + fmtNum(T.kg / KG_PER_MT, 2) + '</td><td class="num">' + money(T.tot) + '</td><td class="num">' + (T.kg ? money(T.tot / (T.kg / KG_PER_MT)) : "—") + '</td><td class="num">' + (T.rev ? money(T.rev) : "—") + '</td><td class="num">' + (T.rev ? (T.pl < 0 ? "-" : "") + money(Math.abs(T.pl)) : "—") + '</td></tr>';
+    host.innerHTML = html + '</tbody></table></div>';
+  }
+
   function renderReports() {
     if (!$("#view-reports")) return;
     renderFactorySummary();
+    renderBillingSummary();
     const rows = filteredEntries();
 
     const totalBatches = rows.length;
@@ -2632,7 +2698,7 @@
     const logBody = $("#batch-log-body");
     logBody.innerHTML = "";
     if (!rows.length) {
-      logBody.appendChild(el("tr", {}, [el("td", { colspan: "12", class: "empty-hint" }, ["No batches logged in this range."])]));
+      logBody.appendChild(el("tr", {}, [el("td", { colspan: "13", class: "empty-hint" }, ["No batches logged in this range."])]));
     } else {
       rows.slice().sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0)).forEach((r) => {
         const hasJobwork = !!r.jobworkCompanyId;
@@ -2641,6 +2707,7 @@
           el("td", {}, [r.date]),
           el("td", {}, [productName(r.productId)]),
           el("td", {}, [hasJobwork ? (r.jobworkCompanyName || r.jobworkCompanyId) : "—"]),
+          el("td", {}, [billingFirmOf(r) || "—"]),
           el("td", { class: "num" }, [fmtNum((r.outputQty || 0) / KG_PER_MT, 2)]),
           el("td", { class: "num" }, [fmtINR(r.rmCost)]),
           el("td", { class: "num" }, [fmtINR(r.processingCost)]),
@@ -2715,6 +2782,7 @@
       "Date": r.date,
       "Product": productName(r.productId),
       "Job Work Company": r.jobworkCompanyId ? (r.jobworkCompanyName || r.jobworkCompanyId) : "",
+      "Billed Under": billingFirmOf(r),
       "Output (MT)": Number(((r.outputQty || 0) / KG_PER_MT).toFixed(2)),
       "RM Cost": r.rmCost || 0,
       "Processing Cost": r.processingCost || 0,
@@ -3678,6 +3746,16 @@
       rebuildMaterialGrid();
     });
     if ($("#f-jobwork-company")) $("#f-jobwork-company").addEventListener("change", updateLiveSummary);
+    if ($("#f-jobwork-company")) $("#f-jobwork-company").addEventListener("change", syncBillingFirmField);
+    if ($("#f-date")) $("#f-date").addEventListener("change", syncBillingFirmField);
+    if ($("#f-billing-firm")) {
+      $("#f-billing-firm").innerHTML = '<option value="">— Not set —</option>' + BILLING_FIRMS.map((f) => '<option>' + f + '</option>').join("");
+      $("#f-billing-firm").addEventListener("change", () => { $("#f-billing-firm").dataset.manual = "1"; if ($("#f-billing-hint")) $("#f-billing-hint").textContent = ""; });
+    }
+    if ($("#rep-billing")) {
+      $("#rep-billing").innerHTML = '<option value="">All billing companies</option>' + BILLING_FIRMS.map((f) => '<option>' + f + '</option>').join("") + '<option value="__none__">Not set</option>';
+      $("#rep-billing").addEventListener("change", renderReports);
+    }
 
     // Entry form — "+ Add new product…" inline
     $("#f-product").addEventListener("change", () => {

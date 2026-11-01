@@ -124,6 +124,11 @@
             <label for="f-jobwork-company">Job work for (optional)</label>
             <select id="f-jobwork-company"></select>
             <div class="rate-readout" id="f-jobwork-rate-display" hidden>Rate: &#8212;</div>
+            <div class="field" style="margin-top:8px; max-width:320px;">
+              <label for="f-billing-firm">Billed under</label>
+              <select id="f-billing-firm"></select>
+              <p class="hint" id="f-billing-hint" style="margin:4px 0 0;"></p>
+            </div>
             <div class="field" id="f-jobwork-rate-input-wrap" hidden style="margin-top:8px; max-width:260px;">
               <label for="f-jobwork-rate-input">Rate agreed for this order (&#8377;/MT)</label>
               <input type="number" min="0" step="any" id="f-jobwork-rate-input" placeholder="Enter the rate for this order" />
@@ -242,6 +247,10 @@
           <select id="rep-company"></select>
         </div>
         <div class="field">
+          <label for="rep-billing">Billed under</label>
+          <select id="rep-billing"></select>
+        </div>
+        <div class="field">
           <label for="rep-factory">Factory</label>
           <select id="rep-factory" class="factory-view-select"><option value="">Both (consolidated)</option><option value="Orathur">Orathur</option><option value="Vikravandi">Vikravandi</option></select>
         </div>
@@ -261,6 +270,12 @@
       <div class="card-title">Factory-wise statement</div>
       <p class="hint" style="margin:-6px 0 10px;">Each factory on its own, and both together. Uses the date, product and company filters above.</p>
       <div id="factory-summary"></div>
+    </div>
+
+    <div class="card" style="margin-top:16px;">
+      <div class="card-title">Company-wise statement (billed under)</div>
+      <p class="hint" style="margin:-6px 0 10px;">Batches grouped by the group firm they are billed under. Silverline (SFL) &rarr; MYM Agro Industries and SKY WIN &rarr; EMR Agro Industries from 25-09-2026; before that both were billed under EMR Agro Traders. A batch&rsquo;s own &ldquo;Billed under&rdquo; on Log Batch overrides this.</p>
+      <div id="billing-summary"></div>
     </div>
 
     <div class="card">
@@ -304,7 +319,7 @@
         <table>
           <thead>
             <tr>
-              <th>Date</th><th>Product</th><th>Job work company</th><th class="num">Output (MT)</th><th class="num">RM cost</th>
+              <th>Date</th><th>Product</th><th>Job work company</th><th>Billed under</th><th class="num">Output (MT)</th><th class="num">RM cost</th>
               <th class="num">Processing</th><th class="num">Labour</th><th class="num">Total cost</th>
               <th class="num">Revenue</th><th class="num">Profit/Loss</th><th class="num">Cost/Kg</th><th></th>
             </tr>
@@ -845,6 +860,6 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
-<script src="app.js?v=55"></script>
+<script src="app.js?v=56"></script>
 </body>
 </html>
