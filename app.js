@@ -734,6 +734,11 @@
     if (/sky\s*win/i.test(n)) return after ? "EMR Agro Industries" : "EMR Agro Traders";
     return "";
   }
+  // How many batches one Log Batch entry stands for (the "Batches" dropdown
+  // next to Output produced). Older entries count as 1.
+  function batchCountOf(e) { return Math.max(1, parseInt(e && e.batchCount, 10) || 1); }
+  const sumBatches = (rows) => rows.reduce((a, e) => a + batchCountOf(e), 0);
+
   function billingFirmOf(e) {
     if (e.billingFirm) return e.billingFirm;
     return e.jobworkCompanyId ? billingRuleFor(e.jobworkCompanyId, e.jobworkCompanyName, e.date) : "";
@@ -1955,6 +1960,7 @@
       createdAt: (existing && existing.createdAt) || new Date().toISOString(),
     };
     if (editingId) payload.updatedAt = new Date().toISOString();
+    payload.batchCount = $("#f-batch-count") ? (parseInt($("#f-batch-count").value, 10) || 1) : 1;
     const billSel = $("#f-billing-firm");
     if (billSel && billSel.value) payload.billingFirm = billSel.value;
 
@@ -2057,6 +2063,7 @@
     if ($("#f-jobwork-company")) $("#f-jobwork-company").value = "";
     if ($("#f-jobwork-rate-input")) $("#f-jobwork-rate-input").value = "";
     if ($("#f-billing-firm")) { $("#f-billing-firm").dataset.manual = ""; $("#f-billing-firm").value = ""; }
+    if ($("#f-batch-count")) $("#f-batch-count").value = "1";
     $all(".mat-input").forEach((i) => (i.value = ""));
     if (keepDate) $("#f-date").value = keepDate;
     syncBillingFirmField();
@@ -2097,9 +2104,10 @@
     }
     rows.forEach((r) => {
       const outputMTVal = (r.outputQty || 0) / KG_PER_MT;
+      const bc = batchCountOf(r) > 1 ? " (" + batchCountOf(r) + " batches)" : "";
       const metaText = state.role === "team"
-        ? fmtNum(outputMTVal, 2) + " MT"
-        : fmtNum(outputMTVal, 2) + " MT · " + fmtINR(r.totalCost) + " · " + fmtINR(r.costPerKg) + "/Kg";
+        ? fmtNum(outputMTVal, 2) + " MT" + bc
+        : fmtNum(outputMTVal, 2) + " MT" + bc + " · " + fmtINR(r.totalCost) + " · " + fmtINR(r.costPerKg) + "/Kg";
       const row = el("div", { class: "today-row" }, [
         el("div", { class: "today-main" }, [
           el("span", { class: "today-product" }, [productName(r.productId)]),
@@ -2149,6 +2157,7 @@
     // the unit picker to MT so the displayed number matches the label).
     $("#f-output").value = entry.outputQty ? entry.outputQty / KG_PER_MT : "";
     if ($("#f-output-unit")) $("#f-output-unit").value = "Metric Tonne";
+    if ($("#f-batch-count")) $("#f-batch-count").value = String(batchCountOf(entry));
     $("#f-operators").value = entry.operators || "";
     $("#f-loadmen").value = entry.loadmen || "";
     $("#f-remarks").value = opts.keepRemarks ? (entry.remarks || "") : "";
@@ -2247,6 +2256,7 @@
       ["Date", entry.date || "—"],
       ["Product", productName(entry.productId)],
       ["Output", fmtNum((entry.outputQty || 0) / KG_PER_MT, 2) + " MT"],
+      ["Batches", String(batchCountOf(entry))],
     ];
     if (entry.usesDayLabourSplit) {
       rows.push(["Crew", "Shared day crew (labour split by output — see " + entry.date + "'s total)"]);
@@ -2464,7 +2474,7 @@
     if (!$("#view-jobwork")) return;
     const rows = filteredJobEntries();
 
-    const totalBatches = rows.length;
+    const totalBatches = sumBatches(rows);
     const totalOutput = rows.reduce((s, r) => s + (r.outputQty || 0), 0);
     const totalRevenue = rows.reduce((s, r) => s + (r.jobworkRevenue || 0), 0);
     const totalCost = rows.reduce((s, r) => s + (r.totalCost || 0), 0);
@@ -2485,7 +2495,7 @@
     rows.forEach((r) => {
       const k = r.jobworkCompanyId;
       if (!byCompany[k]) byCompany[k] = { companyId: k, companyName: r.jobworkCompanyName, batches: 0, output: 0, revenue: 0, cost: 0 };
-      byCompany[k].batches += 1;
+      byCompany[k].batches += batchCountOf(r);
       byCompany[k].output += r.outputQty || 0;
       byCompany[k].revenue += r.jobworkRevenue || 0;
       byCompany[k].cost += r.totalCost || 0;
@@ -2516,7 +2526,7 @@
     rows.forEach((r) => {
       const k = r.date;
       if (!byDay[k]) byDay[k] = { date: k, batches: 0, output: 0, revenue: 0, cost: 0 };
-      byDay[k].batches += 1;
+      byDay[k].batches += batchCountOf(r);
       byDay[k].output += r.outputQty || 0;
       byDay[k].revenue += r.jobworkRevenue || 0;
       byDay[k].cost += r.totalCost || 0;
@@ -2612,7 +2622,7 @@
     const all = filteredEntries();
     state.viewFactory = saved;
     const sum = (rows) => {
-      const t = { n: rows.length, kg: 0, rm: 0, proc: 0, lab: 0, tot: 0, jrev: 0 };
+      const t = { n: sumBatches(rows), kg: 0, rm: 0, proc: 0, lab: 0, tot: 0, jrev: 0 };
       rows.forEach((e) => {
         t.kg += Number(e.outputQty) || 0; t.rm += Number(e.rmCost) || 0; t.proc += Number(e.processingCost) || 0;
         t.lab += Number(e.labourCost) || 0; t.tot += Number(e.totalCost) || 0; t.jrev += Number(e.jobworkRevenue) || 0;
@@ -2640,7 +2650,7 @@
     groups.forEach((g) => {
       const r = rows.filter((e) => billingFirmOf(e) === g);
       if (!r.length && g === "") return;
-      const t = { n: r.length, kg: 0, tot: 0, rev: 0, pl: 0 };
+      const t = { n: sumBatches(r), kg: 0, tot: 0, rev: 0, pl: 0 };
       r.forEach((e) => { t.kg += Number(e.outputQty) || 0; t.tot += Number(e.totalCost) || 0; if (e.jobworkCompanyId) { t.rev += Number(e.jobworkRevenue) || 0; t.pl += Number(e.jobworkProfit) || 0; } });
       Object.keys(T).forEach((k) => { T[k] += t[k]; });
       html += '<tr' + (t.n ? '' : ' style="opacity:.55"') + '><td>' + (g || "<em>Not set</em> <span class=\"hint\">(regular production &amp; other companies)</span>") + '</td><td class="num">' + t.n + '</td><td class="num">' + fmtNum(t.kg / KG_PER_MT, 2) + '</td><td class="num">' + money(t.tot) + '</td><td class="num">' + (t.kg ? money(t.tot / (t.kg / KG_PER_MT)) : "—") + '</td><td class="num">' + (t.rev ? money(t.rev) : "—") + '</td><td class="num' + (t.pl < 0 ? ' pl-negative' : t.pl > 0 ? ' pl-positive' : '') + '">' + (t.rev ? (t.pl < 0 ? "-" : "") + money(Math.abs(t.pl)) : "—") + '</td></tr>';
@@ -2655,7 +2665,7 @@
     renderBillingSummary();
     const rows = filteredEntries();
 
-    const totalBatches = rows.length;
+    const totalBatches = sumBatches(rows);
     const totalOutput = rows.reduce((s, r) => s + (r.outputQty || 0), 0);
     const totalCost = rows.reduce((s, r) => s + (r.totalCost || 0), 0);
     const avgCpk = totalOutput > 0 ? totalCost / totalOutput : 0;
@@ -2670,7 +2680,7 @@
     rows.forEach((r) => {
       const k = r.productId;
       if (!byProduct[k]) byProduct[k] = { productId: k, batches: 0, output: 0, cost: 0 };
-      byProduct[k].batches += 1;
+      byProduct[k].batches += batchCountOf(r);
       byProduct[k].output += r.outputQty || 0;
       byProduct[k].cost += r.totalCost || 0;
     });
@@ -2708,7 +2718,7 @@
           el("td", {}, [productName(r.productId)]),
           el("td", {}, [hasJobwork ? (r.jobworkCompanyName || r.jobworkCompanyId) : "—"]),
           el("td", {}, [billingFirmOf(r) || "—"]),
-          el("td", { class: "num" }, [fmtNum((r.outputQty || 0) / KG_PER_MT, 2)]),
+          el("td", { class: "num" }, [fmtNum((r.outputQty || 0) / KG_PER_MT, 2) + (batchCountOf(r) > 1 ? " (" + batchCountOf(r) + " batches)" : "")]),
           el("td", { class: "num" }, [fmtINR(r.rmCost)]),
           el("td", { class: "num" }, [fmtINR(r.processingCost)]),
           el("td", { class: "num" }, [fmtINR(r.labourCost)]),
@@ -2783,6 +2793,7 @@
       "Product": productName(r.productId),
       "Job Work Company": r.jobworkCompanyId ? (r.jobworkCompanyName || r.jobworkCompanyId) : "",
       "Billed Under": billingFirmOf(r),
+      "Batches": batchCountOf(r),
       "Output (MT)": Number(((r.outputQty || 0) / KG_PER_MT).toFixed(2)),
       "RM Cost": r.rmCost || 0,
       "Processing Cost": r.processingCost || 0,
@@ -3748,6 +3759,9 @@
     if ($("#f-jobwork-company")) $("#f-jobwork-company").addEventListener("change", updateLiveSummary);
     if ($("#f-jobwork-company")) $("#f-jobwork-company").addEventListener("change", syncBillingFirmField);
     if ($("#f-date")) $("#f-date").addEventListener("change", syncBillingFirmField);
+    if ($("#f-batch-count") && !$("#f-batch-count").options.length) {
+      $("#f-batch-count").innerHTML = Array.from({ length: 20 }, (_, i) => '<option value="' + (i + 1) + '">' + (i + 1) + (i ? " batches" : " batch") + '</option>').join("");
+    }
     if ($("#f-billing-firm")) {
       $("#f-billing-firm").innerHTML = '<option value="">— Not set —</option>' + BILLING_FIRMS.map((f) => '<option>' + f + '</option>').join("");
       $("#f-billing-firm").addEventListener("change", () => { $("#f-billing-firm").dataset.manual = "1"; if ($("#f-billing-hint")) $("#f-billing-hint").textContent = ""; });

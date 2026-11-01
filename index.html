@@ -15,10 +15,10 @@
 <link rel="stylesheet" href="style.css?v=17" />
 <style>
 /* Output produced: wider, larger and highlighted so it stands out on the form */
-.output-field{grid-column:span 2;min-width:min(100%,320px)}
+.output-field{grid-column:span 2;min-width:min(100%,380px)}
 .output-field label{font-size:.9rem;color:var(--critical,#e8456b)}
 #f-output{font-size:1.45rem;font-weight:800;min-height:54px;padding:8px 14px;border-width:2px;border-color:var(--critical,#e8456b)}
-#f-output-unit{font-weight:700;font-size:1.05rem;min-height:54px;border-width:2px}
+#f-output-unit,#f-batch-count{font-weight:700;font-size:1.05rem;min-height:54px;border-width:2px}
 @media (max-width:640px){.output-field{grid-column:1/-1}}
 </style>
 </head>
@@ -116,14 +116,16 @@
           </div>
           <div class="field output-field">
             <label for="f-output">Output produced</label>
-            <div style="display:flex; gap:6px;">
-              <input type="number" min="0" step="any" inputmode="decimal" id="f-output" placeholder="Enter output" style="flex:1; min-width:0;" />
-              <select id="f-output-unit" class="unit-select" style="max-width:110px;">
+            <div style="display:flex; gap:6px; flex-wrap:wrap;">
+              <input type="number" min="0" step="any" inputmode="decimal" id="f-output" placeholder="Enter output" style="flex:1 1 140px; min-width:120px;" />
+              <select id="f-output-unit" class="unit-select" style="flex:0 0 96px;">
                 <option value="Kg">Kg</option>
                 <option value="Litre">Litre</option>
                 <option value="Metric Tonne" selected>MT</option>
               </select>
+              <select id="f-batch-count" aria-label="Number of batches" title="How many batches this output is from" style="flex:0 0 130px;"></select>
             </div>
+            <p class="hint" style="margin:4px 0 0;">Total output of all the batches picked. Labour comes from the day&rsquo;s attendance as usual.</p>
           </div>
         </div>
 
@@ -868,6 +870,6 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
-<script src="app.js?v=56"></script>
+<script src="app.js?v=57"></script>
 </body>
 </html>
