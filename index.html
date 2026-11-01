@@ -13,6 +13,14 @@
      Bump the ?v= number on app.js, style.css and firebase-config.js below every time
      any of those files are redeployed, so users don't keep running a stale cached copy. -->
 <link rel="stylesheet" href="style.css?v=17" />
+<style>
+/* Output produced: wider, larger and highlighted so it stands out on the form */
+.output-field{grid-column:span 2;min-width:min(100%,300px)}
+.output-field label{font-size:.8rem;color:var(--critical,#e8456b)}
+#f-output{font-size:1.25rem;font-weight:800;min-height:46px;border-width:2px;border-color:var(--critical,#e8456b)}
+#f-output-unit{font-weight:700;min-height:46px;border-width:2px}
+@media (max-width:640px){.output-field{grid-column:1/-1}}
+</style>
 </head>
 <body>
 
@@ -106,11 +114,11 @@
               <button type="button" class="btn btn-secondary btn-small" id="btn-cancel-add-product-inline">Cancel</button>
             </div>
           </div>
-          <div class="field">
+          <div class="field output-field">
             <label for="f-output">Output produced</label>
             <div style="display:flex; gap:6px;">
-              <input type="number" min="0" step="any" inputmode="decimal" id="f-output" placeholder="0" style="flex:1; min-width:0;" />
-              <select id="f-output-unit" class="unit-select" style="max-width:100px;">
+              <input type="number" min="0" step="any" inputmode="decimal" id="f-output" placeholder="Enter output" style="flex:1; min-width:0;" />
+              <select id="f-output-unit" class="unit-select" style="max-width:110px;">
                 <option value="Kg">Kg</option>
                 <option value="Litre">Litre</option>
                 <option value="Metric Tonne" selected>MT</option>
