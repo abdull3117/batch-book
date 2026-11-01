@@ -725,7 +725,14 @@
         </div>
 <div class="card">
           <div class="card-title">Monthly budget (&#8377; per month)</div>
-          <p class="hint">Used for the <strong>current month</strong> while it is running, and for any cost head with no actual bill in a past month.</p>
+          <p class="hint">Pick a month to enter that month&rsquo;s own budget. It is used for any cost head with no actual bill in that month. Months without their own budget use the Default figures.</p>
+          <div class="field-row" style="grid-template-columns:1fr 1fr;align-items:end;">
+            <div class="field">
+              <label for="s-budget-month">Month</label>
+              <select id="s-budget-month"></select>
+            </div>
+            <p class="hint" id="s-budget-month-status" style="margin:0 0 10px;"></p>
+          </div>
           <div class="field-row" style="grid-template-columns:1fr 1fr;">
             <div class="field">
               <label for="s-eb-cost">EB (electricity) cost</label>
@@ -765,7 +772,8 @@
           <div class="summary-row"><span class="k">Rate applied to this month&rsquo;s batches</span><span class="v" id="proc-per-mt-rate">&ndash;</span></div>
           <p class="hint" style="margin-top:4px;">Monthly output isn&rsquo;t typed in &mdash; it&rsquo;s taken from the batches at every month end. This month&rsquo;s batches use last month&rsquo;s actual rate (actual processing cost &divide; actual output) for each factory, and are re-costed at this month&rsquo;s own actual rate once it ends.</p>
           <input type="hidden" id="s-budgeted-output-mt" />
-          <button class="btn btn-primary" id="btn-save-processing-breakdown" style="margin-top:8px;">Save breakdown</button>
+          <button class="btn btn-primary" id="btn-save-processing-breakdown" style="margin-top:8px;">Save budget</button>
+          <button class="btn btn-secondary" id="btn-budget-month-clear" style="margin-top:8px;" hidden>Use default for this month</button>
         </div>
     </div>
 
@@ -833,6 +841,6 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
-<script src="app.js?v=52"></script>
+<script src="app.js?v=53"></script>
 </body>
 </html>

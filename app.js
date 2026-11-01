@@ -78,6 +78,10 @@
     ebCost: 0, fuelCost: 0, maintenanceCost: 0, electricalMaintenanceCost: 0,
     stitchingExpense: 0, sackExpenses: 0, departmentExpenses: 0, staffSalaries: 0,
     budgetedMonthlyOutputMT: 0,
+    vkdOperatorRate: null, vkdLoadmanRate: null,
+    // Month-by-month budget: { "YYYY-MM": { ebCost, fuelCost, ... } }. A month
+    // with its own entry uses it; any other month uses the default above.
+    budgetMonths: {},
   };
   const PROCESSING_BREAKDOWN_FIELDS = [
     "ebCost", "fuelCost", "maintenanceCost", "electricalMaintenanceCost",
@@ -112,6 +116,13 @@
       ],
     },
   ];
+
+  // The budget figures that apply to month m: that month's own budget if
+  // one is saved, otherwise the default budget.
+  function budgetFor(m) {
+    const own = m && state.labour.budgetMonths ? state.labour.budgetMonths[m] : null;
+    return own ? Object.assign({}, state.labour, own) : state.labour;
+  }
 
   function monthlyProcessingCostTotal(labour) {
     return PROCESSING_BREAKDOWN_FIELDS.reduce((sum, k) => sum + (Number(labour[k]) || 0), 0);
@@ -357,7 +368,7 @@
       // Fuel is always the actual purchases — no budget fallback; a month
       // with no shell-cake purchase for that factory carries no fuel.
       else if (k === "fuelCost") { amount = 0; source = "bills"; }
-      else { amount = (Number(state.labour[k]) || 0) * share; source = "budget"; }
+      else { amount = (Number(budgetFor(m)[k]) || 0) * share; source = "budget"; }
       fields[k] = { amount, source };
       total += amount;
     });
@@ -414,7 +425,7 @@
     // No actual rate for that month (e.g. every batch on a fixed rate):
     // the monthly budget amounts ÷ that month's actual output.
     if (rate == null && last.mt > 0) {
-      const total = monthlyProcessingCostTotal(state.labour);
+      const total = monthlyProcessingCostTotal(budgetFor(last.month));
       rate = total > 0 ? total / last.mt : null;
     }
     return rate == null ? null : { rate, month: last.month, mt: last.mt };
@@ -789,7 +800,7 @@
     } else {
       const floating = date ? floatingRateFor(monthOf(date), factory) : null;
       const running = floating == null ? runningRateFor(factory || "Orathur") : null;
-      const perMT = floating != null ? floating : running ? running.rate : processingCostPerMT(state.labour);
+      const perMT = floating != null ? floating : running ? running.rate : processingCostPerMT(budgetFor(date ? monthOf(date) : ""));
       processingCost = perMT != null
         ? perMT * (outputQty / KG_PER_MT)
         : (Number(state.labour.processingCost) || 0);
@@ -3268,10 +3279,19 @@
       electricalMaintenanceCost: "s-electrical-maintenance-cost", stitchingExpense: "s-stitching-expense",
       sackExpenses: "s-sack-expenses", departmentExpenses: "s-department-expenses", staffSalaries: "s-staff-salaries",
     };
+    renderBudgetMonthPicker();
+    const bm = selectedBudgetMonth();
+    const src = bm ? budgetFor(bm) : state.labour;
     Object.keys(fieldIds).forEach((k) => {
       const inp = $("#" + fieldIds[k]);
-      if (inp) inp.value = state.labour[k] || "";
+      if (inp && document.activeElement !== inp) inp.value = src[k] || "";
     });
+    const own = bm && state.labour.budgetMonths && state.labour.budgetMonths[bm];
+    if ($("#s-budget-month-status")) $("#s-budget-month-status").innerHTML = !bm
+      ? "Default budget &mdash; used for every month that has no budget of its own."
+      : own ? "<strong>" + monthLabelShort(bm) + "</strong> has its own budget."
+      : "No budget saved for <strong>" + monthLabelShort(bm) + "</strong> yet &mdash; showing the default figures. Change them and tap Save to set this month&rsquo;s own budget.";
+    if ($("#btn-budget-month-clear")) $("#btn-budget-month-clear").hidden = !own;
     if ($("#s-budgeted-output-mt")) $("#s-budgeted-output-mt").value = state.labour.budgetedMonthlyOutputMT || "";
     updateProcessingBreakdownReadout();
   }
@@ -3414,7 +3434,67 @@
     }
   }
 
+  // Month picker for the Monthly budget card: "" = default budget.
+  function selectedBudgetMonth() { const el = $("#s-budget-month"); return el ? el.value : ""; }
+  function renderBudgetMonthPicker() {
+    const el = $("#s-budget-month");
+    if (!el) return;
+    const keep = el.dataset.ready ? el.value : todayStr().slice(0, 7);
+    const now = todayStr().slice(0, 7);
+    const set = new Set(state.entries.map((e) => monthOf(e.date)).filter((m) => /^\d{4}-\d{2}$/.test(m)));
+    Object.keys(state.labour.budgetMonths || {}).forEach((m) => set.add(m));
+    set.add(now);
+    const d = new Date(now + "-01T00:00:00"); d.setMonth(d.getMonth() + 1);
+    set.add(d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0"));
+    const own = state.labour.budgetMonths || {};
+    const months = Array.from(set).sort().reverse();
+    el.innerHTML = '<option value="">Default (months without their own budget)</option>' +
+      months.map((m) => '<option value="' + m + '">' + monthLabelShort(m) + (m === now ? " (this month)" : "") + (own[m] ? " ✓" : "") + '</option>').join("");
+    el.value = months.indexOf(keep) !== -1 || keep === "" ? keep : now;
+    el.dataset.ready = "1";
+  }
+
+  async function clearBudgetMonth() {
+    const m = selectedBudgetMonth();
+    if (!m) return;
+    const budgetMonths = Object.assign({}, state.labour.budgetMonths || {});
+    delete budgetMonths[m];
+    state.labour = Object.assign({}, state.labour, { budgetMonths });
+    try {
+      if (state.db) await state.db.doc("settings/labour").set(state.labour);
+      if (isClosedMonth(m)) await recalcMonthProcessing(m);
+      toast(monthLabelShort(m) + " now uses the default budget.", "success");
+      renderSettingsLabour();
+      renderFloatingRates();
+    } catch (e) { toast("Could not save: " + e.message, "error"); }
+  }
+
   async function saveProcessingBreakdown() {
+    const bm = selectedBudgetMonth();
+    if (bm) {
+      const own = {};
+      PROCESSING_BREAKDOWN_FIELDS.forEach((k) => {
+        const id = { ebCost: "s-eb-cost", fuelCost: "s-fuel-cost", maintenanceCost: "s-maintenance-cost",
+          electricalMaintenanceCost: "s-electrical-maintenance-cost", stitchingExpense: "s-stitching-expense",
+          sackExpenses: "s-sack-expenses", departmentExpenses: "s-department-expenses", staffSalaries: "s-staff-salaries" }[k];
+        own[k] = parseFloat($("#" + id).value) || 0;
+      });
+      own.updatedAt = new Date().toISOString();
+      const budgetMonths = Object.assign({}, state.labour.budgetMonths || {}, { [bm]: own });
+      state.labour = Object.assign({}, state.labour, { budgetMonths });
+      try {
+        if (state.db) await state.db.doc("settings/labour").set(state.labour);
+        // A finished month is re-costed straight away with its new budget.
+        if (isClosedMonth(bm)) await recalcMonthProcessing(bm);
+        toast("Budget for " + monthLabelShort(bm) + " saved (" + fmtINR(monthlyProcessingCostTotal(own)) + ").", "success");
+        renderSettingsLabour();
+        renderFloatingRates();
+        updateLiveSummary();
+      } catch (e) {
+        toast("Could not save budget: " + e.message, "error");
+      }
+      return;
+    }
     const payload = Object.assign({}, state.labour, {
       ebCost: parseFloat($("#s-eb-cost").value) || 0,
       fuelCost: parseFloat($("#s-fuel-cost").value) || 0,
@@ -3714,6 +3794,8 @@
 
     // Processing cost breakdown — live readout as the user types, before saving.
     $("#btn-save-processing-breakdown").addEventListener("click", saveProcessingBreakdown);
+    if ($("#s-budget-month")) $("#s-budget-month").addEventListener("change", renderSettingsLabour);
+    if ($("#btn-budget-month-clear")) $("#btn-budget-month-clear").addEventListener("click", clearBudgetMonth);
     if ($("#btn-float-save")) $("#btn-float-save").addEventListener("click", saveFloatingManual);
     if ($("#btn-float-recalc")) $("#btn-float-recalc").addEventListener("click", () => recalcAllClosedMonths(true));
     [
