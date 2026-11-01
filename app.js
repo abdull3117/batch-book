@@ -3435,23 +3435,41 @@
   }
 
   // Month picker for the Monthly budget card: "" = default budget.
-  function selectedBudgetMonth() { const el = $("#s-budget-month"); return el ? el.value : ""; }
+  // Year + month pickers for the Monthly budget card. Month "" = default budget.
+  const BUDGET_MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  function selectedBudgetMonth() {
+    const y = $("#s-budget-year"), m = $("#s-budget-month");
+    if (!y || !m || !m.value) return "";
+    return y.value + "-" + m.value;
+  }
   function renderBudgetMonthPicker() {
-    const el = $("#s-budget-month");
-    if (!el) return;
-    const keep = el.dataset.ready ? el.value : todayStr().slice(0, 7);
+    const ys = $("#s-budget-year"), ms = $("#s-budget-month");
+    if (!ys || !ms) return;
     const now = todayStr().slice(0, 7);
-    const set = new Set(state.entries.map((e) => monthOf(e.date)).filter((m) => /^\d{4}-\d{2}$/.test(m)));
-    Object.keys(state.labour.budgetMonths || {}).forEach((m) => set.add(m));
-    set.add(now);
-    const d = new Date(now + "-01T00:00:00"); d.setMonth(d.getMonth() + 1);
-    set.add(d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0"));
     const own = state.labour.budgetMonths || {};
-    const months = Array.from(set).sort().reverse();
-    el.innerHTML = '<option value="">Default (months without their own budget)</option>' +
-      months.map((m) => '<option value="' + m + '">' + monthLabelShort(m) + (m === now ? " (this month)" : "") + (own[m] ? " ✓" : "") + '</option>').join("");
-    el.value = months.indexOf(keep) !== -1 || keep === "" ? keep : now;
-    el.dataset.ready = "1";
+    if (!ys.dataset.ready) { ys.dataset.keep = now.slice(0, 4); ms.dataset.keep = now.slice(5, 7); }
+    const keepY = ys.dataset.ready ? ys.value : ys.dataset.keep;
+    const keepM = ms.dataset.ready ? ms.value : ms.dataset.keep;
+    // Every year from the first batch (or budget) to next year.
+    const years = state.entries.map((e) => monthOf(e.date)).concat(Object.keys(own))
+      .filter((m) => /^\d{4}-\d{2}$/.test(m)).map((m) => +m.slice(0, 4));
+    const first = Math.min(+now.slice(0, 4), ...years), last = +now.slice(0, 4) + 1;
+    let yh = "";
+    for (let y = last; y >= first; y--) {
+      const n = Object.keys(own).filter((k) => k.slice(0, 4) === String(y)).length;
+      yh += '<option value="' + y + '">' + y + (n ? " (" + n + " set)" : "") + '</option>';
+    }
+    ys.innerHTML = yh;
+    ys.value = String(keepY || now.slice(0, 4));
+    const y = ys.value;
+    ms.innerHTML = '<option value="">Default (all months without their own)</option>' +
+      BUDGET_MONTH_NAMES.map((nm, i) => {
+        const mm = String(i + 1).padStart(2, "0"), key = y + "-" + mm;
+        return '<option value="' + mm + '">' + nm + " " + y + (key === now ? " (this month)" : "") + (own[key] ? " ✓" : "") + '</option>';
+      }).join("");
+    ms.value = keepM == null ? now.slice(5, 7) : keepM;
+    ys.disabled = !ms.value;
+    ys.dataset.ready = "1"; ms.dataset.ready = "1";
   }
 
   async function clearBudgetMonth() {
@@ -3795,6 +3813,7 @@
     // Processing cost breakdown — live readout as the user types, before saving.
     $("#btn-save-processing-breakdown").addEventListener("click", saveProcessingBreakdown);
     if ($("#s-budget-month")) $("#s-budget-month").addEventListener("change", renderSettingsLabour);
+    if ($("#s-budget-year")) $("#s-budget-year").addEventListener("change", renderSettingsLabour);
     if ($("#btn-budget-month-clear")) $("#btn-budget-month-clear").addEventListener("click", clearBudgetMonth);
     if ($("#btn-float-save")) $("#btn-float-save").addEventListener("click", saveFloatingManual);
     if ($("#btn-float-recalc")) $("#btn-float-recalc").addEventListener("click", () => recalcAllClosedMonths(true));

@@ -728,11 +728,15 @@
           <p class="hint">Pick a month to enter that month&rsquo;s own budget. It is used for any cost head with no actual bill in that month. Months without their own budget use the Default figures.</p>
           <div class="field-row" style="grid-template-columns:1fr 1fr;align-items:end;">
             <div class="field">
+              <label for="s-budget-year">Year</label>
+              <select id="s-budget-year"></select>
+            </div>
+            <div class="field">
               <label for="s-budget-month">Month</label>
               <select id="s-budget-month"></select>
             </div>
-            <p class="hint" id="s-budget-month-status" style="margin:0 0 10px;"></p>
           </div>
+          <p class="hint" id="s-budget-month-status" style="margin:-4px 0 10px;"></p>
           <div class="field-row" style="grid-template-columns:1fr 1fr;">
             <div class="field">
               <label for="s-eb-cost">EB (electricity) cost</label>
@@ -841,6 +845,6 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
-<script src="app.js?v=53"></script>
+<script src="app.js?v=54"></script>
 </body>
 </html>
