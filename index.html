@@ -21,6 +21,26 @@
 #f-output-unit,#f-batch-count{font-weight:700;font-size:1.05rem;min-height:54px;border-width:2px}
 @media (max-width:640px){.output-field{grid-column:1/-1}}
 </style>
+<style>
+/* Raw material: pick from a list, enter quantity, Add; entered ones listed below */
+.mat-pick-row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:8px}
+#mat-pick,#mat-pick-qty{background:var(--bg);border:2px solid var(--border-strong);border-radius:var(--radius-sm);padding:9px 10px;color:var(--text);font-weight:600;font:inherit;font-weight:600}
+#mat-pick:focus,#mat-pick-qty:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+@media (max-width:560px){
+  .mat-picked-row{grid-template-columns:auto minmax(0,1fr) auto;grid-template-areas:"n n n" "q v a";row-gap:2px}
+  .mp-name{grid-area:n;white-space:normal}.mp-qty{grid-area:q;text-align:left}.mp-val{grid-area:v;text-align:left;min-width:0}.mp-act{grid-area:a}
+}
+#mat-pick{flex:2 1 220px;min-width:0}
+.mat-pick-qtywrap{flex:1 1 140px;display:flex;align-items:center;gap:6px;min-width:0}
+#mat-pick-qty{flex:1;min-width:0;font-weight:700}
+#mat-picked{display:flex;flex-direction:column;gap:6px;margin-bottom:6px}
+.mat-picked-row{display:grid;grid-template-columns:minmax(0,1fr) auto auto auto;gap:10px;align-items:center;background:var(--bg);border:2px solid var(--border);border-radius:var(--radius-sm);padding:6px 10px}
+.mp-name{font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mp-qty{font-family:var(--font-mono);font-weight:700;text-align:right}
+.mp-val{font-family:var(--font-mono);color:var(--text-faint);text-align:right;min-width:80px}
+.mp-act{display:flex;gap:4px}
+.mat-picked-total{display:flex;justify-content:space-between;font-weight:800;padding:4px 10px;font-size:.88rem}
+</style>
 </head>
 <body>
 
@@ -147,11 +167,16 @@
         </div>
 
         <div class="card-title" style="margin-top:6px;">Raw material used today</div>
-        <div class="mat-search-row">
-          <input type="text" id="mat-search" placeholder="Search a raw material&hellip;" />
-          <span class="hint">Leave unused materials blank</span>
-          <button type="button" class="btn btn-secondary btn-small" id="btn-show-add-material-inline">+ Add material</button>
+        <div class="mat-pick-row">
+          <select id="mat-pick" aria-label="Raw material"></select>
+          <div class="mat-pick-qtywrap">
+            <input type="number" min="0" step="any" inputmode="decimal" id="mat-pick-qty" placeholder="Quantity" aria-label="Quantity used" />
+            <span id="mat-pick-unit" class="mat-unit"></span>
+          </div>
+          <button type="button" class="btn btn-primary btn-small" id="btn-mat-add">Add</button>
+          <button type="button" class="btn btn-secondary btn-small" id="btn-show-add-material-inline">+ New material</button>
         </div>
+        <div id="mat-picked"></div>
         <div class="inline-add-row" id="add-material-inline" hidden>
           <input type="text" id="new-mat-name-inline" placeholder="Material name" />
           <select id="new-mat-unit-inline" class="unit-select">
@@ -163,7 +188,7 @@
           <button type="button" class="btn btn-primary btn-small" id="btn-confirm-add-material-inline">Add</button>
           <button type="button" class="btn btn-secondary btn-small" id="btn-cancel-add-material-inline">Cancel</button>
         </div>
-        <div id="material-grid"></div>
+        <div id="material-grid" hidden></div>
 
         <div class="labour-row" id="f-labour-row" hidden>
           <div class="field">
@@ -870,6 +895,6 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
-<script src="app.js?v=57"></script>
+<script src="app.js?v=58"></script>
 </body>
 </html>

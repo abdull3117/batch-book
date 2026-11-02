@@ -1585,13 +1585,15 @@
   // ---------------------------------------------------------------
   // ENTRY TAB
   // ---------------------------------------------------------------
+  // The raw-material quantities live in one (hidden) input per material,
+  // which the rest of the form reads. Supervisors fill them through the
+  // "pick a material + quantity + Add" row; what's entered is listed below it.
   function rebuildMaterialGrid() {
     const grid = $("#material-grid");
     if (!grid) return;
-    const filter = state.materialFilter.trim().toLowerCase();
+    const keep = getFormMaterialsQty(); // don't lose quantities typed before a refresh
     grid.innerHTML = "";
     state.materials.forEach((m) => {
-      if (filter && m.name.toLowerCase().indexOf(filter) === -1) return;
       const input = el("input", {
         type: "number", min: "0", step: "any", inputmode: "decimal",
         class: "mat-input", "data-mat": m.id, placeholder: "0",
@@ -1604,7 +1606,58 @@
         input,
       ]);
       grid.appendChild(row);
+      if (keep[m.id] != null) input.value = keep[m.id];
     });
+    populateMatPicker();
+    renderMatPicked();
+  }
+
+  function escapeHtml(t) { return String(t == null ? "" : t).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
+  function matInputFor(id) { return id ? document.querySelector('.mat-input[data-mat="' + id + '"]') : null; }
+
+  function populateMatPicker() {
+    const sel = $("#mat-pick");
+    if (!sel) return;
+    const cur = sel.value, have = getFormMaterialsQty();
+    sel.innerHTML = '<option value="">Select raw material…</option>' + state.materials.map((m) =>
+      '<option value="' + escapeHtml(m.id) + '">' + escapeHtml(m.name) + " (" + escapeHtml(m.unit) + ")" + (have[m.id] != null ? " ✓" : "") + '</option>').join("");
+    if (cur && state.materials.some((m) => m.id === cur)) sel.value = cur;
+    const m = state.materials.find((x) => x.id === sel.value);
+    if ($("#mat-pick-unit")) $("#mat-pick-unit").textContent = m ? m.unit : "";
+  }
+
+  function addPickedMaterial() {
+    const sel = $("#mat-pick"), q = $("#mat-pick-qty");
+    if (!sel.value) return toast("Pick a raw material first.", "error");
+    const qty = parseFloat(q.value);
+    if (!(qty > 0)) { q.focus(); return toast("Enter the quantity used.", "error"); }
+    const inp = matInputFor(sel.value);
+    if (!inp) return;
+    const had = inp.value !== "";
+    inp.value = qty;
+    const m = state.materials.find((x) => x.id === sel.value);
+    if (had) toast((m ? m.name : "Material") + " changed to " + fmtNum(qty, 2) + " " + (m ? m.unit : "") + ".", "success");
+    sel.value = ""; q.value = "";
+    updateLiveSummary();
+    sel.focus();
+  }
+
+  function renderMatPicked() {
+    const host = $("#mat-picked");
+    if (!host) return;
+    const qty = getFormMaterialsQty();
+    const ids = Object.keys(qty);
+    if (!ids.length) { host.innerHTML = '<p class="hint" style="margin:6px 0 0;">No raw materials added yet. Pick one above, enter the quantity and tap Add.</p>'; return; }
+    const showCost = state.role !== "team";
+    let total = 0;
+    const rows = ids.map((id) => {
+      const m = state.materials.find((x) => x.id === id) || { name: id, unit: "", rate: 0 };
+      const val = qty[id] * (Number(m.rate) || 0); total += val;
+      return '<div class="mat-picked-row"><span class="mp-name">' + escapeHtml(m.name) + '</span><span class="mp-qty">' + fmtNum(qty[id], 2) + " " + escapeHtml(m.unit) + '</span>' +
+        (showCost ? '<span class="mp-val">' + fmtINR(val) + '</span>' : '') +
+        '<span class="mp-act"><button type="button" class="icon-btn" title="Change quantity" data-mp-edit="' + escapeHtml(id) + '">✎</button><button type="button" class="icon-btn danger" title="Remove" data-mp-del="' + escapeHtml(id) + '">✕</button></span></div>';
+    }).join("");
+    host.innerHTML = rows + '<div class="mat-picked-total"><span>' + ids.length + " material" + (ids.length === 1 ? "" : "s") + ' used</span>' + (showCost ? '<span>' + fmtINR(total) + '</span>' : '') + '</div>';
   }
 
   function populateProductSelects() {
@@ -1809,6 +1862,7 @@
   }
 
   function updateLiveSummary() {
+    try { renderMatPicked(); populateMatPicker(); } catch (e) { /* ignore */ }
     // The form collects output in whichever unit is picked; convert to
     // Kg-equivalent here since costing (rmCost, costPerKg) stays Kg-based.
     const outputVal = parseFloat($("#f-output").value) || 0;
@@ -3752,10 +3806,25 @@
         editEntry(entry);
       });
     }
-    $("#mat-search").addEventListener("input", (e) => {
-      state.materialFilter = e.target.value;
-      rebuildMaterialGrid();
-    });
+    if ($("#mat-pick")) {
+      $("#mat-pick").addEventListener("change", () => {
+        populateMatPicker();
+        const inp = matInputFor($("#mat-pick").value);
+        $("#mat-pick-qty").value = inp && inp.value ? inp.value : "";
+        $("#mat-pick-qty").focus();
+      });
+      $("#btn-mat-add").addEventListener("click", addPickedMaterial);
+      $("#mat-pick-qty").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); addPickedMaterial(); } });
+      $("#mat-picked").addEventListener("click", (e) => {
+        const b = e.target.closest("button"); if (!b) return;
+        if (b.dataset.mpDel) { const inp = matInputFor(b.dataset.mpDel); if (inp) inp.value = ""; updateLiveSummary(); }
+        if (b.dataset.mpEdit) {
+          $("#mat-pick").value = b.dataset.mpEdit; populateMatPicker();
+          const inp = matInputFor(b.dataset.mpEdit);
+          $("#mat-pick-qty").value = inp ? inp.value : ""; $("#mat-pick-qty").focus(); $("#mat-pick-qty").select();
+        }
+      });
+    }
     if ($("#f-jobwork-company")) $("#f-jobwork-company").addEventListener("change", updateLiveSummary);
     if ($("#f-jobwork-company")) $("#f-jobwork-company").addEventListener("change", syncBillingFirmField);
     if ($("#f-date")) $("#f-date").addEventListener("change", syncBillingFirmField);
